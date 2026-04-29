@@ -1,8 +1,10 @@
-"""recon - offline-only OSINT helpers.
+"""recon - offline-only OSINT helpers + `gh` CLI wrappers.
 
-DNS, whois, certificate transparency. No vendor APIs by default. Vendor
-integrations (Shodan, VirusTotal) are a separate opt-in extras module
-under harness.tools.recon_extras (not loaded automatically).
+DNS, whois, certificate transparency. Plus thin wrappers around the `gh`
+CLI baked into the runtime image (authenticated via a PAT mounted at
+/run/secrets/gh_token) for GitHub-side recon. No vendor OSINT APIs by
+default; Shodan/VirusTotal are a separate opt-in extras module under
+redteam.tools.recon_extras (not loaded automatically).
 """
 
 from __future__ import annotations

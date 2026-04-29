@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover
 class Telemetry:
     """Thin wrapper so callers don't need to know whether OTel is wired."""
 
-    def __init__(self, service_name: str = "harness"):
+    def __init__(self, service_name: str = "redteam"):
         self.service_name = service_name
         self._tracer = trace.get_tracer(service_name) if _HAS_OTEL else None
 
@@ -34,7 +34,7 @@ class Telemetry:
         with self._tracer.start_as_current_span(f"tool:{tool_name}") as span:
             for k, v in attrs.items():
                 if isinstance(v, (str, int, float, bool)):
-                    span.set_attribute(f"harness.tool.{k}", v)
+                    span.set_attribute(f"redteam.tool.{k}", v)
             try:
                 yield span
             except Exception as e:
@@ -47,7 +47,7 @@ class Telemetry:
         span = trace.get_current_span()
         span.add_event(
             "tool.denied",
-            attributes={"harness.tool.name": tool_name, "harness.tool.deny_reason": reason},
+            attributes={"redteam.tool.name": tool_name, "redteam.tool.deny_reason": reason},
         )
 
     def event_finding(self, severity: str, title: str) -> None:
@@ -56,5 +56,5 @@ class Telemetry:
         span = trace.get_current_span()
         span.add_event(
             "finding.recorded",
-            attributes={"harness.finding.severity": severity, "harness.finding.title": title},
+            attributes={"redteam.finding.severity": severity, "redteam.finding.title": title},
         )

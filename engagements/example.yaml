@@ -1,0 +1,89 @@
+# Canonical engagement template.
+#
+# Sign with:
+#   ssh-keygen -Y sign -f ~/.ssh/id_ed25519 -n redteam-engagement \
+#     engagements/example.yaml > engagements/example.yaml.sig
+# Verify with:
+#   ssh-keygen -Y verify -f engagements/authorized_signers \
+#     -I alice@example.com -n redteam-engagement \
+#     -s engagements/example.yaml.sig < engagements/example.yaml
+id: ENG-2026-04-001
+operator: alice@example.com
+operator_signature: |                # paste ssh-keygen -Y sign output here
+  -----BEGIN SSH SIGNATURE-----
+  TODO_REPLACE_WITH_REAL_SIGNATURE
+  -----END SSH SIGNATURE-----
+authorized_by: ciso@example.com
+
+window:
+  start: 2026-04-27T09:00:00Z
+  end:   2026-04-27T17:00:00Z
+
+scope:
+  targets:
+    - https://staging.example.com
+    - 10.20.0.0/24
+  out_of_scope:
+    - https://staging.example.com/admin
+  egress_allowlist:
+    - api.anthropic.com
+    - api.github.com           # gh CLI in recon pack
+    - mcp.atlassian.com        # only if external_mcp.atlassian enabled
+    - kms.us-east-1.amazonaws.com
+    - crt.sh
+    - staging.example.com
+
+# Optional whitebox attack surface. Operator pre-clones repos via:
+#   gh repo clone myorg/example-api ./targets/example-api
+assets:
+  source_repos:
+    - path: ./targets/example-api
+      language: python
+      role: backend
+  iac:
+    - path: ./targets/example-infra/terraform
+      kind: terraform
+  specs:
+    - path: ./targets/example-api/openapi.yaml
+      kind: openapi
+
+budget:
+  max_turns: 200
+  max_usd: 25.00
+  max_tool_calls_per_target: 50
+
+tools:
+  - recon
+  - web
+  - whitebox
+  - report
+
+subagents: [recon, analyst, whitebox]
+
+# Allowlist: only `atlassian` is permitted. GitHub is reached via the
+# `gh` CLI in the runtime image, not via MCP. Leaving this empty is the
+# default; uncomment to enable Atlassian Rovo.
+external_mcp: []
+# external_mcp:
+#   - name: atlassian
+#     transport: http
+#     url: https://mcp.atlassian.com/v1/sse
+#     allowed_tools:
+#       - jira__search
+#       - jira__get_issue
+#       - jira__create_issue       # for finding upsert
+#       - jira__update_issue       # for finding upsert
+#       - confluence__search
+#       - confluence__get_page
+
+objective: |
+  Identify any unauthenticated endpoints under staging.example.com that
+  expose user PII. Cross-reference findings with the OpenAPI spec at
+  /assets/source/backend/openapi.yaml and the backend source tree.
+  Do NOT attempt write/delete operations. Confirm every finding with at
+  least two independent observations before reporting via
+  report__write_finding.
+
+reporting:
+  format: sarif
+  destination: /audit/findings.sarif

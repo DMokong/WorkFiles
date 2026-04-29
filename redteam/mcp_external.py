@@ -1,9 +1,13 @@
-"""External MCP adapter - GitHub and Atlassian only.
+"""External MCP adapter - Atlassian Rovo only.
 
 The schema (engagement.ExternalMcp) already enforces the allowlist at
 parse time. This module turns validated entries into the connection
 configs the SDK consumes, plus performs runtime preflight checks
 (egress reachability, ledger record on failure).
+
+GitHub is intentionally *not* an MCP dependency: recon and asset-fetch
+use the `gh` CLI baked into the runtime image, authenticated via a PAT
+mounted at /run/secrets/gh_token. See redteam/tools/recon.py.
 """
 
 from __future__ import annotations

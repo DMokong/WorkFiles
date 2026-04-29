@@ -63,7 +63,7 @@ def verify(ledger_path: Path, seal_path: Path | None, hmac_key: bytes | None) ->
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="harness-verify")
+    p = argparse.ArgumentParser(prog="redteam-verify")
     p.add_argument("ledger", type=Path, help="path to .jsonl ledger")
     p.add_argument("seal", type=Path, nargs="?", help="optional .seal file")
     p.add_argument(

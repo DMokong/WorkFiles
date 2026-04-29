@@ -1,0 +1,12 @@
+{
+  "$comment": "Default-deny egress template. Entrypoint renders this from scope.egress_allowlist into iptables/nftables. The Anthropic API endpoint is always permitted.",
+  "policy": "default-deny",
+  "always_allow": [
+    "api.anthropic.com",
+    "169.254.169.254"
+  ],
+  "from_engagement": [
+    "$.scope.egress_allowlist[*]"
+  ],
+  "deny_log": "/audit/netpolicy.log"
+}

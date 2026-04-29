@@ -1,4 +1,4 @@
-"""Command-line interface for the harness."""
+"""Command-line interface for redteam."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from .orchestrator import Orchestrator, load_hmac_key
 @click.group()
 @click.version_option()
 def main() -> None:
-    """harness - modular security testing harness."""
+    """redteam - modular security testing harness."""
 
 
 @main.command("validate")

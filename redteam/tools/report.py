@@ -78,9 +78,9 @@ def _empty_sarif() -> str:
                 {
                     "tool": {
                         "driver": {
-                            "name": "harness",
+                            "name": "redteam",
                             "version": "0.1.0",
-                            "informationUri": "https://example.invalid/harness",
+                            "informationUri": "https://example.invalid/redteam",
                         }
                     },
                     "results": [],

@@ -1,0 +1,25 @@
+{
+  "$comment": "Starter dashboard. Tracks tool.invoked / tool.denied / finding.recorded events emitted by the telemetry hook. Import via Grafana UI; the next iteration should provision via Grafana provisioning files.",
+  "title": "redteam - engagement live",
+  "uid": "redteam-engagement",
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Tool calls (invoked vs denied)",
+      "type": "stat",
+      "targets": [
+        {"refId": "A", "expr": "count_over_time({event=\"tool.invoked\"}[5m])"},
+        {"refId": "B", "expr": "count_over_time({event=\"tool.denied\"}[5m])"}
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Findings by severity",
+      "type": "bargauge",
+      "targets": [
+        {"refId": "A", "expr": "count by (redteam_finding_severity) (count_over_time({event=\"finding.recorded\"}[1h]))"}
+      ]
+    }
+  ]
+}

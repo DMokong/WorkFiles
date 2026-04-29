@@ -55,7 +55,7 @@ class Orchestrator:
         self.ledger = LedgerWriter(ledger_path, hmac_key=hmac_key)
         self.audit = AuditWriter(self.ledger, redactor=Redactor())
         self.scope = ScopeGuard(engagement)
-        self.telemetry = Telemetry(service_name=f"harness:{engagement.id}")
+        self.telemetry = Telemetry(service_name=f"redteam:{engagement.id}")
         self.budget = BudgetLedger(spec=engagement.budget)
         self.assets: AssetIndex = build_index(
             engagement.assets, host_root=engagement_path.parent
@@ -245,7 +245,7 @@ def _extract_target_for_budget(tool_input: dict[str, Any]) -> str | None:
 
 def load_hmac_key() -> bytes | None:
     """Load the seal HMAC key from the conventional secret path."""
-    candidates = [Path("/run/secrets/harness_hmac_key"), Path(os.environ.get("HARNESS_HMAC_KEY_FILE", ""))]
+    candidates = [Path("/run/secrets/redteam_hmac_key"), Path(os.environ.get("REDTEAM_HMAC_KEY_FILE", ""))]
     for c in candidates:
         if c and c.is_file():
             return c.read_bytes()

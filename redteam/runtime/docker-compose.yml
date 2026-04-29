@@ -1,0 +1,75 @@
+# One compose project per engagement run.
+#
+# Usage (from the repo root):
+#   ENGAGEMENT=engagements/example.yaml docker compose \
+#     -f redteam/runtime/docker-compose.yml up --abort-on-container-exit redteam
+#
+# Override OTEL_EXPORTER_OTLP_ENDPOINT to ship to the central org Grafana
+# stack instead of the bundled local one.
+services:
+  redteam:
+    build:
+      context: ../..
+      dockerfile: redteam/runtime/Dockerfile
+    image: redteam:0.1.0
+    depends_on:
+      - otel-collector
+    cap_drop: [ALL]
+    cap_add: [NET_RAW, NET_ADMIN]   # NET_RAW for nmap; NET_ADMIN to render netpolicy
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: "10001:10001"
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      OTEL_SERVICE_NAME: "redteam"
+      REDTEAM_KMS_KEY_ID: "${REDTEAM_KMS_KEY_ID:-}"
+      REDTEAM_KMS_REGION: "${AWS_REGION:-us-east-1}"
+      ENGAGEMENT_FILE: "${ENGAGEMENT:-/engagements/example.yaml}"
+    volumes:
+      - ../../engagements:/engagements:ro
+      - ../../targets:/assets:ro              # whitebox surface (see README)
+      - ./netpolicy.json:/opt/redteam/netpolicy.json:ro
+      - audit:/audit
+    secrets:
+      - anthropic_api_key
+      - gh_token
+      - atlassian_token
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.103.1
+    command: ["--config=/etc/otel/collector.yaml"]
+    volumes:
+      - ./otel/collector.yaml:/etc/otel/collector.yaml:ro
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${CENTRAL_OTLP_ENDPOINT:-http://tempo:4317}"
+    ports:
+      - "4317:4317"   # OTLP/gRPC
+      - "4318:4318"   # OTLP/HTTP
+
+  # Local dev Grafana stack. In production, set CENTRAL_OTLP_ENDPOINT and
+  # disable these services with `--scale tempo=0 --scale grafana=0`.
+  tempo:
+    image: grafana/tempo:2.5.0
+    command: ["-config.file=/etc/tempo.yaml"]
+    profiles: [dev]
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    profiles: [dev]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+
+volumes:
+  audit:
+
+secrets:
+  anthropic_api_key:
+    file: ../../.secrets/anthropic_api_key
+  gh_token:
+    file: ../../.secrets/gh_token
+  atlassian_token:
+    file: ../../.secrets/atlassian_token

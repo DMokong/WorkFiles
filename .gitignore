@@ -13,3 +13,5 @@ audit/
 !/targets/.gitkeep
 .env
 *.local
+.secrets/
+*.sig

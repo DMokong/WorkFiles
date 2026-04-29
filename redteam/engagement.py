@@ -23,7 +23,11 @@ from pydantic import (
     model_validator,
 )
 
-ALLOWED_EXTERNAL_MCPS: frozenset[str] = frozenset({"github", "atlassian"})
+# Hard allowlist: v1 supports exactly ONE third-party MCP (Atlassian Rovo).
+# GitHub is handled via the `gh` CLI baked into the runtime image, not via
+# an MCP server. Adding a second provider must be a deliberate code change
+# here, not a YAML flag flip.
+ALLOWED_EXTERNAL_MCPS: frozenset[str] = frozenset({"atlassian"})
 
 
 class Window(BaseModel):
@@ -156,7 +160,8 @@ class ExternalMcp(BaseModel):
             raise ValueError(
                 f"external_mcp.name {v!r} not in allowlist "
                 f"{sorted(ALLOWED_EXTERNAL_MCPS)} - "
-                "third-party MCPs other than GitHub and Atlassian require a code change"
+                "third-party MCPs other than Atlassian Rovo require a code change. "
+                "GitHub is handled via the `gh` CLI in the runtime image, not via MCP."
             )
         return v
 

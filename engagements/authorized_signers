@@ -1,0 +1,14 @@
+# SSH allowed-signers file consumed by `ssh-keygen -Y verify` and by
+# redteam.auth.SignatureVerifier. One operator per line:
+#
+#   <principal> [namespaces="redteam-engagement"] <ssh-public-key>
+#
+# Or, for an SSH-CA-backed setup:
+#
+#   <principal> cert-authority namespaces="redteam-engagement" <ssh-ca-public-key>
+#
+# Rotation = a PR that adds/removes a line. The file is read at engagement
+# parse time on the operator workstation AND inside the container during
+# `redteam run`.
+#
+# alice@example.com namespaces="redteam-engagement" ssh-ed25519 AAAA... alice@laptop
