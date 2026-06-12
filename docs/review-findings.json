@@ -1,0 +1,532 @@
+{
+  "meta": {
+    "repo": "redteam",
+    "branch": "claude/security-testing-harness-X0QVs",
+    "date": "2026-06-12",
+    "method": "Two multi-agent review workflows (9 + 14 dimensions, adversarial verification, completeness critics) merged with a full independent file-by-file read; severities adjudicated by hand; several agent claims tempered or refuted.",
+    "counts": {
+      "distinct_findings": 31,
+      "refuted_or_tempered": 6,
+      "intended_stubs": 5
+    },
+    "fixes_applied": {
+      "batch": "RT-01..RT-08",
+      "date": "2026-06-12",
+      "tests": "tests/test_fixes_rt01_08.py (39 new cases); full suite 66 passed",
+      "verification": "adversarial review workflow (8 per-finding verifiers + regression hunter); RT-06 re-hardened and re-verified after the first pass flagged it",
+      "incidental": [
+        "RT-15 (partial)",
+        "RT-19",
+        "RT-26 (partial)"
+      ]
+    }
+  },
+  "findings": [
+    {
+      "id": "RT-01",
+      "title": "SSRF to AWS instance-metadata enables role-credential theft",
+      "severity": "critical",
+      "kind": "security",
+      "status": "FIXED (verified) \u2014 confirmed",
+      "files": [
+        "redteam/runtime/netpolicy.json:4-7",
+        "redteam/tools/web.py:51-67"
+      ],
+      "evidence": "netpolicy.json always_allow lists 169.254.169.254 (EC2 IMDS). web__http_request uses urllib.request.urlopen which follows 3xx redirects, and only the FIRST url is scope-checked (ctx.assert_in_scope at web.py:42). An in-scope target that 302-redirects to http://169.254.169.254/latest/meta-data/iam/security-credentials/ lets a confused/compromised agent read the harness's own AWS workload-role creds (the role used for KMS sealing).",
+      "repro": "Point an in-scope test server to return 302 Location: http://169.254.169.254/...; web__http_request follows it and returns the metadata body.",
+      "fix": "Disable auto-redirect in the web pack (custom opener that re-runs the scope check per hop); require IMDSv2 (hop-limit 1, session token); remove 169.254.169.254 from netpolicy always_allow and supply boto3 creds via a path the agent's HTTP tool cannot reach.",
+      "fix_note": "Fixed and covered by tests in tests/test_fixes_rt01_08.py."
+    },
+    {
+      "id": "RT-02",
+      "title": "redteam run --dry-run is not dry and crashes before the flag is checked",
+      "severity": "high",
+      "kind": "bug",
+      "status": "FIXED (verified) \u2014 confirmed-by-execution",
+      "files": [
+        "redteam/cli.py:46-61",
+        "redteam/orchestrator.py:52"
+      ],
+      "evidence": "cli.run constructs Orchestrator before checking dry_run; Orchestrator.__init__ unconditionally mkdirs audit_dir (default /audit, read-only on host) and opens the ledger. The documented smoke test crashes: OSError: Read-only file system: '/audit'.",
+      "repro": ".venv/bin/redteam run engagements/example.yaml --dry-run  -> OSError /audit",
+      "fix": "Make --dry-run construct nothing on disk: parse + build_options without instantiating the ledger/audit dir, or gate all filesystem side effects behind 'if not dry_run'. Add a CLI smoke test.",
+      "fix_note": "Fixed and covered by tests in tests/test_fixes_rt01_08.py."
+    },
+    {
+      "id": "RT-03",
+      "title": "Asset paths resolve against the engagement-file parent, not the repo/clone root",
+      "severity": "high",
+      "kind": "bug",
+      "status": "FIXED (verified) \u2014 confirmed-by-execution",
+      "files": [
+        "redteam/orchestrator.py:61",
+        "redteam/assets.py:115-120",
+        "redteam/runtime/docker-compose.yml:31",
+        "engagements/example.yaml:38-48"
+      ],
+      "evidence": "build_index(host_root=engagement_path.parent) resolves example.yaml's ./targets/example-api to engagements/targets/example-api (doesn't exist) -> FileNotFoundError. In-container the mismatch compounds: compose bind-mounts ./targets at /assets:ro, but the index computes host_path under /engagements and whitebox reads host_path (not container_path), so whitebox can never read the assets even after the path bug is fixed.",
+      "repro": ".venv/bin/redteam run engagements/example.yaml --dry-run --audit-dir /tmp/x -> FileNotFoundError targets/example-api resolved under engagements/.",
+      "fix": "Resolve asset paths against a fixed, documented root (repo root / CWD) consistent with where operators clone (./targets) and where compose mounts (/assets); read via container_path in-container; add a test using example.yaml's layout.",
+      "fix_note": "FIXED (asset root + lenient/strict split). Residual: docker-compose still mounts ./targets at /assets (harmless for host-path whitebox; reconcile when container CLI tools land)."
+    },
+    {
+      "id": "RT-04",
+      "title": "SDK hook/agent/option seam is wrong-shaped; the policy gate may not engage",
+      "severity": "critical",
+      "kind": "design-inconsistency",
+      "status": "FIXED (verified) \u2014 confirmed",
+      "files": [
+        "redteam/cli.py:77",
+        "redteam/orchestrator.py:88-138",
+        "redteam/orchestrator.py:208-215"
+      ],
+      "evidence": "cli splats build_options() into ClaudeAgentOptions(**options) with no adapter (despite the docstring claiming conversion). Against the real Python Agent SDK: permission_mode='dontAsk' is not a valid mode; PreToolUse must be a HookMatcher list whose callbacks take (input,tool_use_id,context) and return hookSpecificOutput, not a single payload dict returning top-level permissionDecision; SessionStart/SessionEnd are not tool-gating hooks in that shape; agents must be AgentDefinition objects (passed here as raw markdown strings). Net effect is a TypeError at construction or a deny the SDK ignores (fail-open) \u2014 catastrophic for a harness whose safety story is 'the hook is the gate'.",
+      "repro": "Construct ClaudeAgentOptions(**orch.build_options()) against the installed SDK; observe rejection; inspect HookMatcher/AgentDefinition.",
+      "fix": "Write the real adapter at the _build_hooks seam: wrap hooks in HookMatcher, map to hookSpecificOutput, fix permission_mode, build AgentDefinition objects with per-subagent tool subsets. Add a contract test building real ClaudeAgentOptions from build_options().",
+      "fix_note": "Fixed and covered by tests in tests/test_fixes_rt01_08.py."
+    },
+    {
+      "id": "RT-05",
+      "title": "In-process MCP tool names get an mcp__ prefix that breaks targetless-allow and the allowlist",
+      "severity": "high",
+      "kind": "bug",
+      "status": "FIXED (verified) \u2014 confirmed",
+      "files": [
+        "redteam/orchestrator.py:102-116",
+        "redteam/hooks/scope_guard.py:101-113",
+        "redteam/mcp_external.py:66-72"
+      ],
+      "evidence": "The SDK exposes in-process MCP tools as mcp__<server>__<tool>, and @tool names already embed the pack prefix (e.g. whitebox__repo_read), so the real name is mcp__whitebox__whitebox__repo_read. _TARGETLESS_TOOLS entries and allowed_tools wildcards (whitebox__*) won't match; external 'jira__search' already contains '__' so prefixed_tool_names never adds the 'atlassian' prefix. Fails closed (everything denied) \u2014 dead-on-arrival rather than unsafe, but the whole tool surface is unreachable.",
+      "repro": "Compare @tool registered names vs the tool_name the SDK delivers in PreToolUse payloads.",
+      "fix": "Centralize tool-name derivation; compute names the SDK actually emits in scope_guard and allowed_tools; add a test pinning the emitted tool_name format.",
+      "fix_note": "Fixed and covered by tests in tests/test_fixes_rt01_08.py."
+    },
+    {
+      "id": "RT-06",
+      "title": "Scope-guard URL path-prefix match is not canonicalized (out_of_scope deny bypass)",
+      "severity": "high",
+      "kind": "security",
+      "status": "FIXED (verified) \u2014 confirmed",
+      "files": [
+        "redteam/hooks/scope_guard.py:134-142"
+      ],
+      "evidence": "_UrlPrefixMatcher.matches does raw parsed.path.startswith(path_prefix). With out_of_scope https://staging.example.com/admin: /%61dmin (percent-encoded), //admin (double slash), and /Admin (case) all evade the deny then match the in-scope target. Deny-wins ordering is correct but defeatable by anyone who encodes a URL, including the agent under test.",
+      "repro": "scope.check('web__http_request', {'url':'https://staging.example.com/%61dmin'}) returns allowed despite out_of_scope /admin.",
+      "fix": "Canonicalize before matching: lowercase host, percent-decode path, collapse duplicate slashes, resolve dot-segments; add adversarial tests.",
+      "fix_note": "FIXED + hardened (trailing dots, semicolon params, null-byte, backslash, multi-encoding) and independently re-verified; no realistic-server bypass remains."
+    },
+    {
+      "id": "RT-07",
+      "title": "Empty egress_allowlist silently disables egress checking",
+      "severity": "high",
+      "kind": "security",
+      "status": "FIXED (verified) \u2014 confirmed",
+      "files": [
+        "redteam/hooks/scope_guard.py:66-75",
+        "redteam/engagement.py:52"
+      ],
+      "evidence": "The guard clause 'if host and self._egress_hosts and host not in egress' short-circuits when _egress_hosts is empty, so an omitted/empty egress_allowlist permits any host that matches a target rule \u2014 the opposite of PLAN's default-deny. Schema allows the field empty with no warning. Egress is also only checked for URL candidates; bare-host/CIDR targets skip it because _candidate_host returns None.",
+      "repro": "Engagement with egress_allowlist: [] and a target \u2014 egress is never enforced.",
+      "fix": "Treat empty egress as deny-all (api.anthropic.com implicitly required), or reject empty at parse time; apply the egress check to host/CIDR candidates too.",
+      "fix_note": "FIXED (empty egress now deny-all except targets). Residual (medium): egress check still only applies to URL candidates, not bare-host/CIDR targets \u2014 the 'or' alternative from the original finding."
+    },
+    {
+      "id": "RT-08",
+      "title": "Operator signature is never verified; field optional; chicken-and-egg; principal unbound",
+      "severity": "critical",
+      "kind": "security",
+      "status": "FIXED (verified) \u2014 confirmed (wiring=intended-stub; design flaws real)",
+      "files": [
+        "redteam/engagement.py:193,227-232",
+        "redteam/cli.py:48",
+        "redteam/auth.py",
+        "engagements/example.yaml:12-15"
+      ],
+      "evidence": "from_yaml never calls SignatureVerifier (documented stub, CLAUDE.md build-next #1), so any unsigned YAML runs. Beyond the wiring: operator_signature is Optional[str]=None with no required check; the signature is embedded in the very YAML it signs (signing changes the bytes \u2014 verification can never pass), while example.yaml's own header signs to a DETACHED .sig, contradicting the schema; and nothing binds the ssh -I principal to the operator email, so an operator could present any authorized principal's signature.",
+      "repro": "Engagement.from_yaml(any unsigned yaml) returns a usable object with no error.",
+      "fix": "Decide detached-sidecar vs canonical-YAML-minus-signature BEFORE wiring; make the signature required (non-dry-run); bind principal==operator; wire verify into from_yaml and record the result as ledger entry 0.",
+      "fix_note": "FIXED via detached .sig sidecar verified in the CLI before the orchestrator (fails closed, exit 3); principal bound to operator; embedded field removed."
+    },
+    {
+      "id": "RT-09",
+      "title": "whitebox repo_grep (and asset file-count) follow symlinks out of the read-only mount",
+      "severity": "high",
+      "kind": "security",
+      "status": "confirmed",
+      "files": [
+        "redteam/tools/whitebox.py:63-96",
+        "redteam/assets.py:123-127"
+      ],
+      "evidence": "repo_read is safe (_resolve_under_assets resolves symlinks THEN checks containment). repo_grep is not: it rglob()s the repo and read_text()s every file with no symlink/containment check, so a symlink inside an operator-cloned target repo (attacker-influenceable content) pointing at /etc/passwd or /run/secrets/gh_token is read and returned to the agent. assets._count_files rglob likewise follows symlinks. Both whitebox tools are in _TARGETLESS_TOOLS, so the scope-guard gate never inspects them \u2014 the tool 'lock' is the only defence and it is missing here.",
+      "repro": "Plant repo/link -> /run/secrets/gh_token; repo_grep '.*' returns the secret.",
+      "fix": "Resolve+contain every path repo_grep visits (reuse _resolve_under_assets); skip symlinks pointing outside roots; pass follow/recurse_symlinks=False; add a symlink-escape test."
+    },
+    {
+      "id": "RT-10",
+      "title": "web__http_request allows write verbs and follows redirects with no enforcement",
+      "severity": "high",
+      "kind": "security",
+      "status": "confirmed",
+      "files": [
+        "redteam/tools/web.py:16,42-78"
+      ],
+      "evidence": "_ALLOWED_METHODS includes POST/PUT/PATCH/DELETE; the 'no write/delete' rule lives only in prompts, enforced nowhere. urllib follows redirects (see RT-01). A confused/compromised agent can issue destructive HTTP against an in-scope target and be redirected off-scope.",
+      "repro": "web__http_request(url=in-scope, method='DELETE') is permitted by the tool.",
+      "fix": "Gate write methods behind an explicit engagement flag (default read-only: GET/HEAD/OPTIONS); disable auto-redirect or re-scope each hop."
+    },
+    {
+      "id": "RT-11",
+      "title": "cloud pack is unreachable under the scope guard and advertises GCP/Azure",
+      "severity": "medium",
+      "kind": "design-inconsistency",
+      "status": "confirmed",
+      "files": [
+        "redteam/tools/cloud.py:17-50",
+        "redteam/hooks/scope_guard.py:28,101-113"
+      ],
+      "evidence": "cloud__list_buckets/describe_iam take a 'provider' key, not in _TARGET_KEYS and not in _TARGETLESS_TOOLS, so the guard denies them ('called without a target field'). The cloud pack can never run. The provider enum also advertises ['aws','gcp','azure'], contradicting the AWS-only v1 constraint #5.",
+      "repro": "scope.check('cloud__list_buckets', {'provider':'aws'}) -> denied.",
+      "fix": "Add cloud tools to _TARGETLESS_TOOLS (and scope-check ARNs inside the tool) or give them a target-bearing key; restrict the enum to aws."
+    },
+    {
+      "id": "RT-12",
+      "title": "Engagement time-window is parsed but never enforced",
+      "severity": "high",
+      "kind": "missing-validation",
+      "status": "confirmed",
+      "files": [
+        "redteam/engagement.py:33-46"
+      ],
+      "evidence": "Window.covers() is dead code (no caller). PLAN calls the window a 'hard time bound', but an engagement YAML authorizes a run at any time, forever. This is NOT flagged as a stub \u2014 engagement.py is on the 'real and tested' list.",
+      "repro": "grep -rn 'covers(' redteam/ -> only the definition.",
+      "fix": "Check the window at session start and in _pre_tool_use (deny + ledger entry when outside); decide the naive-timestamp policy explicitly."
+    },
+    {
+      "id": "RT-13",
+      "title": "redteam-verify exits 0 with only a WARN when no HMAC key is supplied",
+      "severity": "high",
+      "kind": "security",
+      "status": "confirmed",
+      "files": [
+        "redteam/ledger/verify.py:53-62"
+      ],
+      "evidence": "PLAN's documented auditor flow is 'redteam-verify <ledger> <seal>' (no key). Without --hmac-key-file, verify prints WARN and returns 0 though it only checked that the seal's head_hash/entry_count match the attacker-recomputable chain. An attacker who truncates the ledger, recomputes head, and rewrites the seal JSON passes with exit 0. The HMAC is the only trust anchor and it is skipped.",
+      "repro": "redteam-verify ledger.jsonl ledger.seal (no key) -> 'OK ... WARN: signature not checked', exit 0.",
+      "fix": "Exit non-zero when a seal is present but unverifiable; for KMS seals require kms:VerifyMac and dispatch on seal['method']."
+    },
+    {
+      "id": "RT-14",
+      "title": "Audit named volume is root-owned and shadows the Dockerfile chown; non-root uid cannot write the ledger",
+      "severity": "high",
+      "kind": "bug",
+      "status": "confirmed",
+      "files": [
+        "redteam/runtime/docker-compose.yml:22,33,67",
+        "redteam/runtime/Dockerfile:49-51"
+      ],
+      "evidence": "Dockerfile chowns /audit to uid 10001, but the named volume 'audit:' mounts over /audit at runtime created root:root, so uid 10001 cannot write \u2014 the first ledger append fails. Classic Docker volume-ownership gotcha.",
+      "repro": "docker compose up redteam -> PermissionError writing /audit/<id>.jsonl.",
+      "fix": "Pre-create/chown the volume dir via an init step, set the volume uid, or chown in entrypoint with the needed privilege; add a container smoke test that writes one ledger entry."
+    },
+    {
+      "id": "RT-15",
+      "title": "Subagent tool-scoping is not enforced; frontmatter is loaded as a raw prompt string",
+      "severity": "high",
+      "kind": "security",
+      "status": "confirmed",
+      "files": [
+        "redteam/orchestrator.py:208-215",
+        "redteam/subagents/exploiter.md"
+      ],
+      "evidence": "_build_subagents reads each .md as a string and passes it as the agent value. The YAML frontmatter 'tools:' (the deliberately narrow set for the dangerous exploiter) is never parsed into an AgentDefinition tool subset \u2014 so per-subagent tool restriction is cosmetic and the frontmatter leaks into the prompt as literal text. Frontmatter tool names also wouldn't match SDK names (see RT-05).",
+      "repro": "Inspect options['agents'] from _build_subagents \u2014 a markdown string, not a tools-restricted AgentDefinition.",
+      "fix": "Parse frontmatter; build AgentDefinition(description, prompt, tools=<mapped subset>); restrict each subagent to its tools.",
+      "fix_note": "PARTIALLY addressed: subagents are now AgentDefinition objects with frontmatter tools mapped to mcp__ names (per-subagent tool subset now wired); full enforcement depends on SDK applying the subset."
+    },
+    {
+      "id": "RT-16",
+      "title": "Dockerfile drops scanner version pins via unquoted shell redirection; unpinned 'latest' binaries; no checksums",
+      "severity": "medium",
+      "kind": "supply-chain",
+      "status": "confirmed",
+      "files": [
+        "redteam/runtime/Dockerfile:1,26-41"
+      ],
+      "evidence": "'pip install --no-cache-dir semgrep>=1.70 checkov>=3.2' is unquoted; the shell parses >=1.70 / >=3.2 as output redirections, so pip installs UNPINNED semgrep/checkov and writes junk files (=1.70/=3.2). tfsec and kube-linter pull releases/latest/download with no checksum/signature; the awscli zip is installed without GPG verification; base python:3.12-slim is not digest-pinned.",
+      "repro": "Build the image; observe stray files and that the semgrep/checkov floors were ignored.",
+      "fix": "Quote version specs ('semgrep>=1.70'); pin exact versions + verify checksums/signatures for tfsec/kube-linter/awscli; digest-pin the base image."
+    },
+    {
+      "id": "RT-17",
+      "title": "No locking on ledger/budget; blocking I/O inside async hooks",
+      "severity": "medium",
+      "kind": "concurrency",
+      "status": "confirmed (latent)",
+      "files": [
+        "redteam/ledger/chain.py:93-108",
+        "redteam/budget.py:11-43",
+        "redteam/tools/web.py:56",
+        "redteam/auth.py:77"
+      ],
+      "evidence": "LedgerWriter.append and BudgetLedger mutate shared state with no lock. Today append() contains no await, so under single-loop cooperative scheduling it is effectively atomic; but the moment the SDK runs hooks/tools concurrently (threads, or if an await is added inside the critical section) the read-modify-write of _seq/_head_hash and the budget counters race and can corrupt the hash chain or miscount. Separately, synchronous I/O in async paths (os.fsync, urllib.request.urlopen, subprocess.run) stalls the event loop.",
+      "repro": "Run two _post_tool_use coroutines under a thread pool against one LedgerWriter; observe interleaved seq/head.",
+      "fix": "Add an asyncio.Lock around append() and budget mutation; move blocking I/O to threads (anyio.to_thread / run_in_executor); document the single-owner invariant if relied upon."
+    },
+    {
+      "id": "RT-18",
+      "title": "Redactor misses standard secrets and over-redacts the audit trail",
+      "severity": "medium",
+      "kind": "security",
+      "status": "confirmed",
+      "files": [
+        "redteam/hooks/redactor.py:14-23"
+      ],
+      "evidence": "The authorization_header pattern requires ':'/'=' immediately after authorization|bearer, so 'Authorization: Bearer eyJ...' is NOT matched (only the separate JWT pattern incidentally catches eyJ tokens; opaque bearer tokens leak to telemetry). The AWS-secret pattern [A-Za-z0-9/+=]{40} matches ANY 40-char token incl every SHA-1/40-hex hash, mass-redacting forensic data \u2014 the exact failure the file's own comment forbids. PLAN says the redactor scrubs PII; there is no PII handling at all.",
+      "repro": "scrub('Authorization: Bearer abc...') leaves it intact; scrub(<any sha1 hex>) redacts it.",
+      "fix": "Fix the auth pattern to match 'Authorization: <scheme> <token>'; constrain/anchor the AWS-secret pattern (context-aware); add PII detectors (email/SSN/cc/phone) for the telemetry path."
+    },
+    {
+      "id": "RT-19",
+      "title": "RunResult.entry_count reports budget.turns, not the ledger sequence (cosmetic mislabel)",
+      "severity": "low",
+      "kind": "bug",
+      "status": "confirmed (severity tempered)",
+      "files": [
+        "redteam/orchestrator.py:226"
+      ],
+      "evidence": "RunResult.entry_count = self.budget.turns (a tool-call count), not ledger._seq. NOTE: several agents called this 'causes seal verification failure' \u2014 that is WRONG. The seal file is written by LedgerWriter.seal() using self._seq, and verify.py compares the seal count to the replayed count; both are consistent. Only the CLI's RunResult summary number is mislabeled.",
+      "repro": "Compare RunResult.entry_count vs ledger._seq after a run.",
+      "fix": "Set entry_count from the ledger (_seq / a public accessor).",
+      "fix_note": "FIXED: RunResult.entry_count now reads ledger.entry_count."
+    },
+    {
+      "id": "RT-20",
+      "title": "Budget semantics: turns count tool calls, >= boundary, cost may never capture model tokens",
+      "severity": "medium",
+      "kind": "bug",
+      "status": "confirmed",
+      "files": [
+        "redteam/budget.py:20,31-43",
+        "redteam/orchestrator.py:178-191"
+      ],
+      "evidence": "record_turn() fires once per PostToolUse, so max_turns actually caps tool calls (and max_turns is ALSO passed to the SDK as the real turn cap \u2014 two meanings). exceeded() uses >= (one extra at the boundary). PostToolUse may run for denied calls, inflating the count. record_cost relies on payload['cost_usd'] from tool events; if the SDK bills model tokens per model turn (not per tool call), max_usd may never accumulate the dominant cost and never trip.",
+      "repro": "Trace whether cost_usd is delivered on PostToolUse in the SDK; count turns vs tool calls in a run.",
+      "fix": "Separate 'turns' from 'tool calls'; confirm the SDK cost signal and wire model-token cost; only count successful, allowed calls."
+    },
+    {
+      "id": "RT-21",
+      "title": "SARIF writer is a non-atomic read-modify-write (race + corruption + unbounded growth)",
+      "severity": "medium",
+      "kind": "bug",
+      "status": "confirmed",
+      "files": [
+        "redteam/tools/report.py:94-115"
+      ],
+      "evidence": "_append_sarif_result reads, parses, appends, and rewrites the whole SARIF doc per finding. Concurrent findings (subagents) can clobber each other; a crash mid-write corrupts the file; the doc is fully re-serialized each call.",
+      "repro": "Two concurrent write_finding calls; observe a lost result or truncated JSON on interrupt.",
+      "fix": "Use an append-only results journal merged at end, or write under a lock to a temp file + atomic rename; bound size."
+    },
+    {
+      "id": "RT-22",
+      "title": "Observability is largely unwired vs the PLAN's claims",
+      "severity": "medium",
+      "kind": "plan-drift",
+      "status": "confirmed",
+      "files": [
+        "redteam/hooks/telemetry.py",
+        "redteam/orchestrator.py",
+        "redteam/runtime/otel/collector.yaml:22-23",
+        "redteam/runtime/docker-compose.yml:62-64"
+      ],
+      "evidence": "Of the three promised structured events only tool.denied is wired: tool.invoked is never emitted, finding.recorded (event_finding) is never called by the report pack, tool_span is never used, and there is no metrics instrumentation despite the collector's metrics pipeline. No OTel SDK/exporter init exists in code (relies on SDK built-in + env). collector tls insecure:true is unconditional (applies to the prod CENTRAL_OTLP_ENDPOINT), and dev Grafana enables anonymous Admin.",
+      "repro": "grep for event_finding/tool_span callers (none); inspect the collector tls block.",
+      "fix": "Emit tool.invoked + finding.recorded; wrap tool execution in tool_span; gate tls insecure to the dev profile; confirm SDK OTel env wiring; align the dashboard to emitted signals."
+    },
+    {
+      "id": "RT-23",
+      "title": "Container hardening gaps: read-only rootfs may break SDK state; CAP_NET_ADMIN as non-root; netpolicy.json dead; secrets always required",
+      "severity": "medium",
+      "kind": "design-inconsistency",
+      "status": "confirmed/partial",
+      "files": [
+        "redteam/runtime/docker-compose.yml:17-37",
+        "redteam/runtime/entrypoint.sh:14-25",
+        "redteam/runtime/netpolicy.json"
+      ],
+      "evidence": "read_only:true with only /tmp and /audit writable likely breaks the SDK's ~/.claude session-JSONL writes that PLAN says are mirrored into the ledger. CAP_NET_ADMIN is granted to render iptables, but the entrypoint runs as uid 10001 and only logs (renders nothing) \u2014 default-deny egress is unenforced (CLAUDE.md #3 stub) AND netpolicy.json is consumed by no code (its JSONPath is never evaluated). atlassian_token is mounted unconditionally even when external_mcp is empty, and .secrets/* must exist or compose fails.",
+      "repro": "Inspect entrypoint (logs only), netpolicy consumers (none), and HOME writability under read_only.",
+      "fix": "Render egress rules (nft) from the allowlist; give the SDK a writable state dir (tmpfs HOME or point it at /tmp); consume or delete netpolicy.json; mount atlassian_token only when enabled."
+    },
+    {
+      "id": "RT-24",
+      "title": "Schema validation gaps: list-size DoS, userinfo URLs, weak hostnames, destination traversal, YAML size",
+      "severity": "medium",
+      "kind": "missing-validation",
+      "status": "confirmed",
+      "files": [
+        "redteam/engagement.py:49-95,185-232"
+      ],
+      "evidence": "No max_length on scope.targets/out_of_scope/egress_allowlist (resource DoS via huge lists). URLs with userinfo pass (https://staging.example.com@evil.com -> urlparse hostname is evil.com, so the operator authorizes a different host than intended). _looks_like_hostname/_HOSTNAME_RE accept wildcards, 'a..b', and trailing dots. Reporting.destination is an unchecked Path (traversal/abspath). from_yaml has no input size cap (large/expanding YAML).",
+      "repro": "Engagement with targets:['https://staging.example.com@evil.com'] authorizes evil.com.",
+      "fix": "Reject userinfo and unintended ports; tighten the hostname regex; cap list lengths and YAML size; constrain Reporting.destination to the audit dir."
+    },
+    {
+      "id": "RT-25",
+      "title": "Asset containment not enforced: absolute paths and ../ escape host_root",
+      "severity": "medium",
+      "kind": "security",
+      "status": "confirmed",
+      "files": [
+        "redteam/assets.py:115-120",
+        "redteam/engagement.py:98-135"
+      ],
+      "evidence": "_resolve_required resolves p relative to host_root but does not assert the result stays under host_root, so an absolute asset path or ../ escapes the intended clone area (operator-controlled, lower risk, but defence-in-depth against a careless/malicious engagement author and pairs badly with RT-09 symlink reads).",
+      "repro": "assets.source_repos[0].path = /etc -> indexed and grep-able.",
+      "fix": "After resolve(), assert relative_to(allowed_root); reject absolute/escaping asset paths at parse time."
+    },
+    {
+      "id": "RT-26",
+      "title": "Thin error handling around setup, hooks, and seal",
+      "severity": "medium",
+      "kind": "bug",
+      "status": "confirmed",
+      "files": [
+        "redteam/orchestrator.py:52,217-235",
+        "redteam/tools/report.py:22-26",
+        "redteam/cli.py:46-62"
+      ],
+      "evidence": "Orchestrator.__init__ mkdir, report build_pack mkdir/write_text, and CLI run() have no try/except, so setup errors surface as raw tracebacks. Hooks may raise (scope.check, float(cost_usd), record_cost ValueError on negative) instead of returning a deny \u2014 if the SDK treats a raising hook as non-blocking, that is fail-open. seal() silently swallows RuntimeError (no HMAC key), hiding a misconfigured production seal.",
+      "repro": "Feed cost_usd='abc' to _post_tool_use -> ValueError escapes the hook.",
+      "fix": "Wrap hook bodies to always return a safe decision (default deny on internal error); log+exit cleanly on setup failure; log when seal is skipped for a missing key.",
+      "fix_note": "PARTIALLY addressed: the PreToolUse hook now fails closed (deny) on internal error."
+    },
+    {
+      "id": "RT-27",
+      "title": "External MCP preflight reachability is promised but absent",
+      "severity": "low",
+      "kind": "plan-drift",
+      "status": "confirmed",
+      "files": [
+        "redteam/mcp_external.py:1-49"
+      ],
+      "evidence": "The module docstring promises 'runtime preflight checks (egress reachability, ledger record on failure)' and PLAN test #7 expects an mcp.external.unreachable ledger entry, but build_configs only records 'registered' \u2014 no reachability check exists. prefixed_tool_names() is dead code.",
+      "repro": "Enable atlassian with mcp.atlassian.com absent from egress; nothing records unreachable.",
+      "fix": "Add a preflight connectivity check that records mcp.external.unreachable, or trim the docstring/PLAN claim; remove dead code."
+    },
+    {
+      "id": "RT-28",
+      "title": "Test suite is shallow relative to the 'real and tested' claim",
+      "severity": "medium",
+      "kind": "test-gap",
+      "status": "confirmed",
+      "files": [
+        "tests/",
+        "tests/test_kms_seal.py",
+        "tests/conftest.py"
+      ],
+      "evidence": "27 tests pass but there are zero tests for the orchestrator hooks, CLI, budget.py, redactor, verify.py, CIDR matching, multi-rule deny-wins, egress-deny, window enforcement, symlink escape, or relative-asset resolution. test_kms_seal mocks boto3 (doesn't exercise KMS). The suite passes today with a deny-bypassable scope guard, a dead window check, a broken dry-run, and an unreachable cloud pack \u2014 i.e., it does not pin the security-critical behaviours.",
+      "repro": "Add a test asserting /%61dmin is denied \u2014 it fails today.",
+      "fix": "Add: CLI smoke (RT-02/03), SDK-shape contract (RT-04/05), adversarial scope-guard (RT-06/07), symlink escape (RT-09), window (RT-12), verify exit codes (RT-13), redactor (RT-18), budget (RT-20)."
+    },
+    {
+      "id": "RT-29",
+      "title": "Documentation drift would mislead a future session",
+      "severity": "medium",
+      "kind": "doc-issue",
+      "status": "confirmed",
+      "files": [
+        "README.md:23,74",
+        "docs/PLAN.md",
+        "CLAUDE.md:110-128"
+      ],
+      "evidence": "README lists 'Auditability \u2014 KMS-sealed ... ledger' though KMS isn't wired (file HMAC is the only path). PLAN claims SDK session JSONL is mirrored into the ledger (no such code), Jira upsert + deterministic key (not implemented), and an 11-scenario verification plan that is mostly aspirational. CLAUDE.md build-next ordering predates the confirmed bugs and should be revised (smoke path + SDK seam before auth wiring).",
+      "repro": "Cross-read each capability claim against code.",
+      "fix": "Mark KMS/Jira/mirroring/window as not-yet-wired in the feature lists; revise the build-next order (see report)."
+    },
+    {
+      "id": "RT-30",
+      "title": "Unused dependencies and missing package metadata",
+      "severity": "low",
+      "kind": "dependency",
+      "status": "confirmed",
+      "files": [
+        "pyproject.toml:15,20,1-9,27"
+      ],
+      "evidence": "cryptography>=42 and anyio>=4.3 are declared but unused (ledger uses stdlib hmac/hashlib; auth shells to ssh-keygen). No license/author/classifier metadata. ruff is in dev extras but unconfigured. claude-agent-sdk>=0.1.0 has no upper bound (acceptable pre-1.0 but pin a tested range).",
+      "repro": "grep imports for cryptography/anyio -> none.",
+      "fix": "Drop unused deps or start using them; add license/author; pin the SDK to a tested range."
+    },
+    {
+      "id": "RT-31",
+      "title": "Minor code-smells and dead code",
+      "severity": "nit",
+      "kind": "code-smell",
+      "status": "confirmed",
+      "files": [
+        "redteam/orchestrator.py:98,238-243",
+        "redteam/mcp_external.py:66-72",
+        "redteam/tools/whitebox.py:47-48"
+      ],
+      "evidence": "_build_first_party_packs builds a throwaway set instead of reusing tools.PACKS. _extract_target logic is duplicated in orchestrator._extract_target_for_budget and scope_guard._extract_target (drift risk). prefixed_tool_names is dead. whitebox__list_assets returns operator host filesystem paths to the model.",
+      "repro": "n/a",
+      "fix": "Reuse PACKS; share one _extract_target; remove dead code; return container paths (not host paths) from list_assets."
+    }
+  ],
+  "refuted": [
+    {
+      "claim": "web__inspect_headers does not re-check scope",
+      "verdict": "refuted",
+      "note": "It calls ctx.assert_in_scope at web.py:90; recon/web/network all do their own 'lock' check."
+    },
+    {
+      "claim": "RunResult.entry_count mislabel causes seal verification failure",
+      "verdict": "refuted (overstated)",
+      "note": "Seal uses ledger._seq; verify compares the seal count to the replayed count. Only the CLI summary number is wrong (see RT-19)."
+    },
+    {
+      "claim": "auth NamedTemporaryFile is world-readable race",
+      "verdict": "refuted",
+      "note": "NamedTemporaryFile creates mode 0600; the signed body is passed via stdin (no temp file); the sig path is unlinked in finally."
+    },
+    {
+      "claim": "auth temp file not flushed before subprocess",
+      "verdict": "refuted",
+      "note": "The signature file's context manager exits (closing/flushing) before ssh-keygen reads it."
+    },
+    {
+      "claim": "file:// / gopher:// SSRF via the web tool",
+      "verdict": "refuted",
+      "note": "Non-matching scheme/host fails the scope matchers; file:// URLs are denied. The real SSRF vector is redirects from an in-scope https target (RT-01/RT-10)."
+    },
+    {
+      "claim": "the ledger hash chain is forgeable / reorderable",
+      "verdict": "refuted",
+      "note": "compute_payload_hash binds prev_hash+seq+canonical(payload); reorder/insert/delete/mutate are all detected on replay. Chain construction is sound."
+    }
+  ],
+  "intended_stubs": [
+    "auth.SignatureVerifier not wired into from_yaml (CLAUDE.md build-next #1) \u2014 the absence of wiring is documented; the design flaws around it (RT-08) are not.",
+    "KMS sealer not wired; orchestrator uses file HMAC; verify.py has no KMS dispatch (CLAUDE.md #2) \u2014 but the verify exit-0-on-no-key trap (RT-13) is a real defect.",
+    "entrypoint.sh renders no iptables (CLAUDE.md #3) \u2014 but netpolicy.json allow-listing IMDS (RT-01) is a real defect in the template it will render.",
+    "recon gh_* / whitebox semgrep|tfsec|checkov / report Jira upsert / cloud bodies return not_implemented (CLAUDE.md #4-6) \u2014 expected.",
+    "docker-compose references .secrets/* that do not exist yet (README tells the operator to create them)."
+  ],
+  "strengths": [
+    "Hash-chained ledger (ledger/chain.py) is the strongest file: payload hash binds prev_hash+seq+canonical JSON, fsync per append, resume replays and re-verifies \u2014 reorder/insert/delete/mutate all caught.",
+    "External-MCP allowlist is enforced twice (parse-time validator + runtime re-assert that raises PermissionError) \u2014 exactly the deliberate-code-change posture CLAUDE.md mandates.",
+    "Clean module seams: _sdk_shim keeps the package importable without the SDK; ToolContext gives packs a uniform context; policy is centralized in hooks (the documented SDK seam).",
+    "recon/web/network tools DO run their own defence-in-depth scope check (assert_in_scope), matching the 'gate + lock' model.",
+    "Subagent prompts are well-written on content: scope discipline, read-only rules, confirm-twice, clean hand-off formats (the gap is structural enforcement, RT-15).",
+    "Honest documentation discipline (real-vs-stub marking, 'What NOT to do', explicit constraints) is better than most production repos."
+  ],
+  "build_order": [
+    "0. Fix the smoke path so the repo runs end-to-end as documented: make --dry-run construct nothing (RT-02); resolve asset paths against a fixed root and reconcile compose mounts (RT-03); add a CLI smoke test.",
+    "1. Prove the SDK seam before anything depends on it: install the SDK in dev extras; add a contract test building real ClaudeAgentOptions from build_options(); write the hook adapter (HookMatcher/hookSpecificOutput), fix permission_mode, AgentDefinition agents, and tool-name prefixes in _TARGETLESS_TOOLS/allowed_tools (RT-04/RT-05). Everything else assumes the gate works.",
+    "2. Close the live security gaps: remove IMDS from the egress template + disable/re-scope web redirects + require IMDSv2 (RT-01/RT-10); canonicalize scope-guard URLs (RT-06); make empty egress deny-all (RT-07); contain repo_grep symlinks (RT-09); enforce the time window (RT-12).",
+    "3. Wire auth \u2014 AFTER deciding detached-vs-embedded signing and binding principal==operator; make the signature required (RT-08).",
+    "4. Make the audit trail trustworthy: redteam-verify fails closed without a key + dispatch on seal method (RT-13); add the Sealer protocol and default to KMS in-container (CLAUDE.md #2); add an asyncio.Lock around ledger/budget (RT-17).",
+    "5. Container correctness: fix the audit volume ownership (RT-14); writable HOME for SDK state + render egress nft rules (RT-23); pin+verify Dockerfile artifacts (RT-16).",
+    "6. Then the existing CLAUDE.md items 4-7 (gh_* tools, Atlassian/Jira upsert, real scanners, OTel dashboard), folding in RT-11 (cloud reachability), RT-18 (redactor+PII), RT-21 (SARIF atomicity), RT-22 (telemetry events).",
+    "7. Backfill the test suite (RT-28) alongside each fix so the security-critical behaviours are pinned."
+  ]
+}
