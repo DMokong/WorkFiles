@@ -1,9 +1,12 @@
 {
-  "$comment": "Default-deny egress template. Entrypoint renders this from scope.egress_allowlist into iptables/nftables. The Anthropic API endpoint is always permitted.",
+  "$comment": "Default-deny egress template. Entrypoint renders this from scope.egress_allowlist into iptables/nftables. Only the Anthropic API endpoint is always permitted. The cloud metadata endpoint (169.254.169.254) is deliberately NOT allow-listed: the agent's tools must never reach IMDS, or an SSRF/redirect could exfiltrate the harness's workload-role credentials. boto3/KMS obtain credentials via the workload role on a path the agent's HTTP tools cannot use (e.g. a separate network namespace or a credential sidecar); if IMDS access is unavoidable, require IMDSv2 with hop-limit 1.",
   "policy": "default-deny",
   "always_allow": [
-    "api.anthropic.com",
-    "169.254.169.254"
+    "api.anthropic.com"
+  ],
+  "deny_egress": [
+    "169.254.169.254",
+    "fd00:ec2::254"
   ],
   "from_engagement": [
     "$.scope.egress_allowlist[*]"

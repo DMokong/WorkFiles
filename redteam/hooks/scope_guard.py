@@ -11,9 +11,61 @@ import ipaddress
 import re
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from ..engagement import Engagement
+
+
+def _strip_mcp_prefix(tool_name: str) -> str:
+    """Strip the SDK's ``mcp__<server>__`` prefix from a tool name.
+
+    The Agent SDK exposes in-process MCP tools to hooks as
+    ``mcp__<server>__<tool>``. Because our ``@tool`` names already embed the
+    pack prefix (e.g. ``whitebox__repo_read``), the delivered name is
+    ``mcp__whitebox__whitebox__repo_read``. We normalise back to the registered
+    tool name so the targetless allowlist and pack-level reasoning still match.
+    """
+    if tool_name.startswith("mcp__"):
+        parts = tool_name.split("__")
+        if len(parts) >= 3:
+            return "__".join(parts[2:])
+    return tool_name
+
+
+def _canonical_path(path: str) -> str:
+    """Canonicalise a URL path for prefix matching.
+
+    Normalises the many ways HTTP servers treat as equivalent, so an
+    out_of_scope deny rule cannot be evaded by rewriting the path. Defeats:
+    percent-encoding (including multiple layers), backslashes, duplicate
+    slashes, ``.``/``..`` segments, null-byte/semicolon truncation, and
+    trailing dots/spaces on a segment (Windows/Apache/IIS strip these). Over-
+    normalising is safe here: it can only make a deny rule match *more*.
+    """
+    prev = None
+    cur = path or "/"
+    # Repeatedly percent-decode to defeat double/triple encoding.
+    for _ in range(8):
+        if cur == prev:
+            break
+        prev = cur
+        cur = unquote(cur)
+    cur = cur.replace("\\", "/")  # some servers treat \ as a path separator
+    parts: list[str] = []
+    for raw in cur.split("/"):
+        seg = raw.split("\x00", 1)[0]  # null-byte truncation
+        seg = seg.split(";", 1)[0]  # path parameters (e.g. /admin;jsessionid=..)
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            if parts:
+                parts.pop()
+            continue
+        seg = seg.rstrip(". ")  # trailing dots/spaces server-side stripping
+        if not seg:
+            continue
+        parts.append(seg)
+    return ("/" + "/".join(parts)).lower()
 
 
 @dataclass(frozen=True)
@@ -43,8 +95,9 @@ class ScopeGuard:
 
         if candidate is None:
             # No target field - allow only if the tool is explicitly target-less.
-            # For unknown tools without a target, deny by default.
-            if _is_targetless_tool(tool_name):
+            # For unknown tools without a target, deny by default. Normalise the
+            # SDK's mcp__<server>__ prefix before consulting the allowlist.
+            if _is_targetless_tool(_strip_mcp_prefix(tool_name)):
                 return ScopeDecision(True, "targetless tool, allowed by policy")
             return ScopeDecision(
                 False,
@@ -64,15 +117,19 @@ class ScopeGuard:
         for matcher in self._target_matchers:
             if matcher.matches(candidate):
                 # 3. for URL targets, additionally check egress allowlist.
+                # An empty egress_allowlist means deny-all egress except the
+                # scope targets themselves - it must NOT short-circuit the check.
                 host = _candidate_host(candidate)
-                if host and self._egress_hosts and host.lower() not in self._egress_hosts:
-                    # Allow when the host itself is one of our scope targets.
-                    if not any(m.matches(host) for m in self._target_matchers):
-                        return ScopeDecision(
-                            False,
-                            f"host {host!r} not in egress_allowlist",
-                            matched_target=matcher.spec,
-                        )
+                if (
+                    host
+                    and host.lower() not in self._egress_hosts
+                    and not any(m.matches(host) for m in self._target_matchers)
+                ):
+                    return ScopeDecision(
+                        False,
+                        f"host {host!r} not in egress_allowlist",
+                        matched_target=matcher.spec,
+                    )
                 return ScopeDecision(
                     True,
                     f"matched target {matcher.spec!r}",
@@ -138,7 +195,7 @@ class _UrlPrefixMatcher(_Matcher):
                 return False
             if parsed.hostname != self.host:
                 return False
-            return parsed.path.startswith(self.path_prefix)
+            return _canonical_path(parsed.path).startswith(self.path_prefix)
         return candidate.lower() == self.host.lower()
 
 
@@ -174,7 +231,7 @@ def _compile_matcher(spec: str) -> _Matcher:
             spec=spec,
             scheme=parsed.scheme,
             host=parsed.hostname or "",
-            path_prefix=parsed.path or "",
+            path_prefix=_canonical_path(parsed.path),
         )
     try:
         net = ipaddress.ip_network(spec, strict=False)

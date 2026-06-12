@@ -74,13 +74,20 @@ class LedgerWriter:
     """Append-only writer. Not thread-safe; one process owns one ledger."""
 
     def __init__(self, path: Path | str, hmac_key: bytes | None = None):
+        # Construction is side-effect-free: the parent dir and file are created
+        # lazily on the first append()/seal(), so a --dry-run that constructs a
+        # LedgerWriter never touches the filesystem.
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         self._hmac_key = hmac_key
         self._seq = 0
         self._head_hash = GENESIS_PREV_HASH
         if self.path.exists() and self.path.stat().st_size > 0:
             self._resume()
+
+    @property
+    def entry_count(self) -> int:
+        """Number of entries appended/observed so far (the next seq)."""
+        return self._seq
 
     def _resume(self) -> None:
         last: LedgerEntry | None = None
@@ -99,6 +106,7 @@ class LedgerWriter:
             payload=payload,
             payload_hash=compute_payload_hash(payload, self._head_hash, self._seq),
         )
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as f:
             f.write(entry.to_json_line())
             f.flush()
@@ -115,6 +123,7 @@ class LedgerWriter:
         if self._hmac_key is None:
             raise RuntimeError("seal() requires an HMAC key")
         target = Path(seal_path) if seal_path else self.path.with_suffix(".seal")
+        target.parent.mkdir(parents=True, exist_ok=True)
         sig = hmac.new(self._hmac_key, self._head_hash.encode("ascii"), hashlib.sha256)
         target.write_text(
             json.dumps(

@@ -83,6 +83,16 @@ class AuditWriter:
     def record_finding(self, finding: dict[str, Any]) -> None:
         self.writer.append({"kind": "finding.recorded", "finding": self.redactor.scrub(finding)})
 
+    def record_signature(self, *, principal: str, ok: bool, detail: str) -> None:
+        self.writer.append(
+            {
+                "kind": "signature.verified",
+                "principal": principal,
+                "ok": ok,
+                "detail": detail,
+            }
+        )
+
     def record_external_mcp(
         self,
         *,

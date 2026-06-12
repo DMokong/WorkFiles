@@ -20,10 +20,14 @@ _SEVERITIES = ("info", "low", "medium", "high", "critical")
 
 
 def build_pack(ctx: ToolContext):
+    # No filesystem side effects at build time (keeps --dry-run clean). The
+    # SARIF file is created lazily on the first finding.
     sarif_path = Path(ctx.engagement.reporting.destination)
-    sarif_path.parent.mkdir(parents=True, exist_ok=True)
-    if not sarif_path.exists():
-        sarif_path.write_text(_empty_sarif(), encoding="utf-8")
+
+    def _ensure_sarif() -> None:
+        if not sarif_path.exists():
+            sarif_path.parent.mkdir(parents=True, exist_ok=True)
+            sarif_path.write_text(_empty_sarif(), encoding="utf-8")
 
     @tool(
         "report__write_finding",
@@ -59,6 +63,7 @@ def build_pack(ctx: ToolContext):
             "engagement_id": ctx.engagement.id,
         }
         ctx.audit.record_finding(finding)
+        _ensure_sarif()
         _append_sarif_result(sarif_path, finding)
         return {"recorded": True, "title": title, "severity": severity}
 

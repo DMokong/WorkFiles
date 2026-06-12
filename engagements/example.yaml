@@ -1,18 +1,15 @@
 # Canonical engagement template.
 #
+# The engagement is signed with a DETACHED signature in a sibling
+# `engagements/example.yaml.sig` file (not an embedded field). The signer
+# principal must match `operator` below and appear in authorized_signers.
+#
 # Sign with:
 #   ssh-keygen -Y sign -f ~/.ssh/id_ed25519 -n redteam-engagement \
-#     engagements/example.yaml > engagements/example.yaml.sig
-# Verify with:
-#   ssh-keygen -Y verify -f engagements/authorized_signers \
-#     -I alice@example.com -n redteam-engagement \
-#     -s engagements/example.yaml.sig < engagements/example.yaml
+#     engagements/example.yaml          # writes engagements/example.yaml.sig
+# `redteam run` verifies it automatically (use --skip-signature for local dev).
 id: ENG-2026-04-001
 operator: alice@example.com
-operator_signature: |                # paste ssh-keygen -Y sign output here
-  -----BEGIN SSH SIGNATURE-----
-  TODO_REPLACE_WITH_REAL_SIGNATURE
-  -----END SSH SIGNATURE-----
 authorized_by: ciso@example.com
 
 window:

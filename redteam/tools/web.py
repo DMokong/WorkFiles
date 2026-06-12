@@ -6,6 +6,8 @@ hook layer; this tool also re-checks as defence in depth.
 
 from __future__ import annotations
 
+import urllib.error
+import urllib.request
 from typing import Any
 
 from ._context import ToolContext
@@ -14,6 +16,24 @@ from ._sdk_shim import create_sdk_mcp_server, tool
 PACK_NAME = "web"
 
 _ALLOWED_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"})
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse to auto-follow redirects.
+
+    The scope guard only sees the *initial* URL. If urllib transparently
+    followed a 3xx, an in-scope target could bounce the agent to an
+    out-of-scope host (e.g. the cloud metadata endpoint) with no fresh scope
+    check. Instead we surface the 3xx response verbatim; the agent must issue a
+    new, separately-scope-checked request to follow it.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None
+
+
+def _build_no_redirect_opener() -> urllib.request.OpenerDirector:
+    return urllib.request.build_opener(_NoRedirect)
 
 
 def build_pack(ctx: ToolContext):
@@ -44,16 +64,15 @@ def build_pack(ctx: ToolContext):
         if method_upper not in _ALLOWED_METHODS:
             raise ValueError(f"method {method!r} not allowed; choose from {sorted(_ALLOWED_METHODS)}")
 
-        # Lazy import - urllib stays stdlib only.
-        import urllib.error
-        import urllib.request
-
         req = urllib.request.Request(url, method=method_upper)
         for k, v in (headers or {}).items():
             req.add_header(k, v)
         data = body.encode("utf-8") if body is not None else None
+        # Use a non-redirecting opener: a 3xx is returned verbatim, never
+        # auto-followed, so the agent cannot be bounced to an unscoped host.
+        opener = _build_no_redirect_opener()
         try:
-            with urllib.request.urlopen(req, data=data, timeout=20) as resp:
+            with opener.open(req, data=data, timeout=20) as resp:
                 raw = resp.read(max_body_bytes + 1)
                 truncated = len(raw) > max_body_bytes
                 payload = raw[:max_body_bytes].decode("utf-8", errors="replace")

@@ -107,3 +107,39 @@ class SignatureVerifier:
             detail=proc.stderr.decode("utf-8", "replace").strip()
             or f"ssh-keygen -Y verify exited {proc.returncode}",
         )
+
+
+def signature_path_for(engagement_file: Path | str) -> Path:
+    """The detached signature sidecar for an engagement file (``<file>.sig``)."""
+    p = Path(engagement_file)
+    return p.with_name(p.name + ".sig")
+
+
+def verify_engagement_file(
+    engagement_file: Path | str,
+    operator: str,
+    allowed_signers: Path = DEFAULT_ALLOWED_SIGNERS,
+    namespace: str = DEFAULT_NAMESPACE,
+) -> VerificationResult:
+    """Verify an engagement's *detached* signature against its operator.
+
+    The signature lives in a sibling ``<engagement>.sig`` file produced by
+    ``ssh-keygen -Y sign`` over the exact engagement-file bytes. This avoids the
+    chicken-and-egg of embedding a signature inside the bytes it signs, and the
+    signer principal is bound to the engagement's declared ``operator`` (so a
+    valid signature from a different authorised principal is still rejected).
+    """
+    engagement_file = Path(engagement_file)
+    sig = signature_path_for(engagement_file)
+    if not sig.is_file():
+        return VerificationResult(
+            ok=False,
+            principal=operator,
+            detail=f"detached signature not found: {sig} "
+            f"(sign with: ssh-keygen -Y sign -f <key> -n {namespace} {engagement_file})",
+        )
+    body = engagement_file.read_bytes()
+    armored = sig.read_text(encoding="utf-8")
+    return SignatureVerifier(allowed_signers=allowed_signers, namespace=namespace).verify(
+        principal=operator, body=body, armored_signature=armored
+    )

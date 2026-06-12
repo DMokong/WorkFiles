@@ -190,7 +190,9 @@ class Reporting(BaseModel):
 class Engagement(BaseModel):
     id: Annotated[str, StringConstraints(pattern=r"^[A-Z0-9][A-Z0-9\-_]{2,63}$")]
     operator: EmailStr
-    operator_signature: str | None = None
+    # The engagement is signed with a *detached* sidecar (<file>.sig) verified
+    # against `operator`, not an embedded field - see redteam/auth.py. An
+    # embedded signature can't sign the bytes it lives in (chicken-and-egg).
     authorized_by: EmailStr
     window: Window
     scope: Scope

@@ -26,27 +26,32 @@ class ExternalMcpConfig:
     allowed_tools: list[str]
 
 
-def build_configs(engagement: Engagement, audit: AuditWriter) -> list[ExternalMcpConfig]:
+def build_configs(engagement: Engagement) -> list[ExternalMcpConfig]:
+    """Pure: validate + build SDK configs for the allow-listed external MCPs.
+
+    No audit side effects, so this is safe to call from build_options() during a
+    --dry-run. Use record_registrations() at session start to log them.
+    """
     out: list[ExternalMcpConfig] = []
     for entry in engagement.external_mcp:
         # Re-assert allowlist at runtime as defence-in-depth.
         if entry.name not in ALLOWED_EXTERNAL_MCPS:
-            audit.record_external_mcp(
-                name=entry.name,
-                status="rejected",
-                detail=f"name not in allowlist {sorted(ALLOWED_EXTERNAL_MCPS)}",
-            )
             raise PermissionError(
                 f"external_mcp {entry.name!r} blocked by allowlist (this should have been "
                 "caught by schema validation; do not bypass)"
             )
         out.append(_to_config(entry))
-        audit.record_external_mcp(
-            name=entry.name,
-            status="registered",
-            detail=f"transport={entry.transport.value} tools={entry.allowed_tools}",
-        )
     return out
+
+
+def record_registrations(configs: list[ExternalMcpConfig], audit: AuditWriter) -> None:
+    """Record each registered external MCP to the audit ledger (session start)."""
+    for cfg in configs:
+        audit.record_external_mcp(
+            name=cfg.name,
+            status="registered",
+            detail=f"tools={cfg.allowed_tools}",
+        )
 
 
 def _to_config(entry: ExternalMcp) -> ExternalMcpConfig:

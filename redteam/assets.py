@@ -52,19 +52,25 @@ class AssetIndex:
         }
 
 
-def build_index(assets: Assets, host_root: Path | None = None) -> AssetIndex:
-    """Validate host paths exist and build a container-path index.
+def build_index(
+    assets: Assets, host_root: Path | None = None, require_exists: bool = True
+) -> AssetIndex:
+    """Build a container-path index of the engagement's assets.
 
-    `host_root` is the directory the host paths are resolved relative to
-    (typically the engagement file's parent). Each entry gets a stable
-    container-side path under /assets/<kind>/<role-or-name>.
+    `host_root` is the directory relative paths resolve against (the dir the
+    operator runs `redteam` from, where ./targets was cloned). Each entry gets
+    a stable container-side path under /assets/<kind>/<role-or-name>.
+
+    When `require_exists` is False (used at construction time, e.g. --dry-run),
+    missing paths do not raise - the index is still built with minimal
+    metadata. A real run validates existence via assert_assets_exist().
     """
     host_root = (host_root or Path.cwd()).resolve()
     index = AssetIndex()
 
     for repo in assets.source_repos:
-        host = _resolve_required(host_root, repo.path)
-        meta = _index_source_repo(host, repo.language)
+        host = _resolve(host_root, repo.path, require_exists)
+        meta = _index_source_repo(host, repo.language) if host.is_dir() else {"present": host.exists()}
         meta["language"] = repo.language
         meta["role"] = repo.role
         index.entries.append(
@@ -77,18 +83,18 @@ def build_index(assets: Assets, host_root: Path | None = None) -> AssetIndex:
         )
 
     for iac in assets.iac:
-        host = _resolve_required(host_root, iac.path)
+        host = _resolve(host_root, iac.path, require_exists)
         index.entries.append(
             AssetEntry(
                 container_path=CONTAINER_ASSETS_ROOT / "iac" / iac.kind / host.name,
                 host_path=host,
                 kind="iac",
-                metadata={"kind": iac.kind, "file_count": _count_files(host)},
+                metadata={"kind": iac.kind, "file_count": _count_files(host) if host.exists() else 0},
             )
         )
 
     for spec in assets.specs:
-        host = _resolve_required(host_root, spec.path)
+        host = _resolve(host_root, spec.path, require_exists)
         index.entries.append(
             AssetEntry(
                 container_path=CONTAINER_ASSETS_ROOT / "specs" / spec.kind / host.name,
@@ -99,7 +105,7 @@ def build_index(assets: Assets, host_root: Path | None = None) -> AssetIndex:
         )
 
     for art in assets.artefacts:
-        host = _resolve_required(host_root, art.path)
+        host = _resolve(host_root, art.path, require_exists)
         index.entries.append(
             AssetEntry(
                 container_path=CONTAINER_ASSETS_ROOT / "artefacts" / art.kind / host.name,
@@ -112,10 +118,24 @@ def build_index(assets: Assets, host_root: Path | None = None) -> AssetIndex:
     return index
 
 
-def _resolve_required(root: Path, p: Path) -> Path:
+def assert_assets_exist(index: AssetIndex) -> None:
+    """Raise FileNotFoundError if any indexed asset path is missing.
+
+    Called at real-run start so an engagement that references un-cloned repos
+    fails early (a --dry-run skips this and tolerates absent assets).
+    """
+    missing = [str(e.host_path) for e in index.entries if not e.host_path.exists()]
+    if missing:
+        raise FileNotFoundError(
+            "asset paths do not exist (clone them into ./targets first): "
+            + ", ".join(missing)
+        )
+
+
+def _resolve(root: Path, p: Path, require_exists: bool) -> Path:
     candidate = p if p.is_absolute() else (root / p)
     candidate = candidate.resolve()
-    if not candidate.exists():
+    if require_exists and not candidate.exists():
         raise FileNotFoundError(f"asset path does not exist: {p} (resolved {candidate})")
     return candidate
 
