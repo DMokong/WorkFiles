@@ -50,16 +50,46 @@ def verify(ledger_path: Path, seal_path: Path | None, hmac_key: bytes | None) ->
         )
         return 5
 
-    if hmac_key is not None:
+    # Fail closed: a seal that is present but whose MAC cannot be checked must
+    # NOT exit 0. Dispatch on the recorded method (file HMAC vs AWS KMS).
+    method = str(seal.get("method", "file"))
+    if method in ("file", "hmac"):
+        if hmac_key is None:
+            print(
+                "FAIL: seal present but no --hmac-key-file given; refusing to pass an "
+                "unverified HMAC seal (supply the key, or omit the seal argument to "
+                "check chain integrity only)",
+                file=sys.stderr,
+            )
+            return 7
         expected = hmac.new(hmac_key, head_hash.encode("ascii"), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, seal.get("hmac_sha256", "")):
+        if not hmac.compare_digest(expected, str(seal.get("hmac_sha256", ""))):
             print("FAIL: HMAC verification failed - seal forged or wrong key", file=sys.stderr)
             return 6
-        print("OK: HMAC seal verified")
-    else:
-        print("WARN: no HMAC key supplied - seal contents matched but signature not checked")
+        print("OK: HMAC seal verified (file key)")
+        return 0
 
-    return 0
+    if method == "kms":
+        try:
+            from .kms_seal import KmsHmacSealer
+
+            sealer = KmsHmacSealer(
+                key_id=str(seal.get("kms_key_arn", "")),
+                region=str(seal.get("kms_region", "")),
+                mac_algorithm=str(seal.get("mac_algorithm", "HMAC_SHA_256")),
+            )
+            valid = sealer.verify(head_hash, str(seal.get("mac", "")))
+        except Exception as e:  # noqa: BLE001 - boto3 missing / no creds / bad ARN
+            print(f"FAIL: KMS seal could not be verified: {e}", file=sys.stderr)
+            return 8
+        if not valid:
+            print("FAIL: KMS MAC verification failed - seal forged or wrong key", file=sys.stderr)
+            return 6
+        print("OK: KMS seal verified (kms:VerifyMac)")
+        return 0
+
+    print(f"FAIL: unknown seal method {method!r}", file=sys.stderr)
+    return 9
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -73,8 +73,19 @@ def build_pack(ctx: ToolContext):
         if repo is None:
             raise ValueError(f"no source repo with role={role!r}")
         matches: list[dict[str, Any]] = []
+        root = repo.host_path  # already resolved by build_index
         for path in repo.host_path.rglob("*"):
             if not path.is_file():
+                continue
+            # Defence-in-depth: skip anything that resolves outside the repo
+            # root - e.g. a symlink planted in an operator-cloned repo pointing
+            # at /etc/passwd or /run/secrets. repo_read already does this; grep
+            # must too, since both are targetless (the scope guard never sees
+            # them).
+            try:
+                if not path.resolve().is_relative_to(root):
+                    continue
+            except OSError:
                 continue
             if path.stat().st_size > _MAX_FILE_BYTES:
                 continue

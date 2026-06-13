@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         dnsutils \
         gh \
         git \
+        gosu \
         iptables \
         jq \
         nmap \
@@ -45,12 +46,15 @@ COPY pyproject.toml /opt/redteam/
 COPY redteam/ /opt/redteam/redteam/
 RUN pip install --no-cache-dir -e .
 
-# Non-root runtime; /audit and /tmp are the only writable surfaces.
+# Create the unprivileged runtime user. The container starts as root so the
+# entrypoint can chown the mounted audit volume (a named volume mounts as root
+# regardless of this image's /audit ownership) and then drops to `redteam` via
+# gosu - so the run itself is never privileged.
 RUN useradd -m -u 10001 -s /usr/sbin/nologin redteam \
     && mkdir -p /audit /assets /run/secrets \
     && chown redteam:redteam /audit
-USER redteam
 
 COPY redteam/runtime/entrypoint.sh /opt/redteam/entrypoint.sh
+RUN chmod +x /opt/redteam/entrypoint.sh
 ENTRYPOINT ["/opt/redteam/entrypoint.sh"]
 CMD ["run", "/engagement.yaml"]

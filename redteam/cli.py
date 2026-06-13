@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
@@ -90,6 +91,15 @@ def run(
                 sys.exit(3)
             click.echo(f"Signature OK: {eng.operator}")
             signature = {"principal": result.principal, "ok": True, "detail": result.detail}
+
+        # Hard time-bound: refuse to start outside the engagement window.
+        if not eng.window.covers(datetime.now(timezone.utc)):
+            click.echo(
+                f"REFUSED: engagement window is not active "
+                f"({eng.window.start.isoformat()}..{eng.window.end.isoformat()})",
+                err=True,
+            )
+            sys.exit(4)
 
     orch = Orchestrator(
         engagement=eng,

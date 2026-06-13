@@ -36,6 +36,14 @@ class Window(BaseModel):
 
     @model_validator(mode="after")
     def _ordered(self) -> "Window":
+        # Reject naive timestamps: a security time-bound must be unambiguous,
+        # and a naive window would otherwise crash covers() at runtime when
+        # compared against an aware datetime.now(timezone.utc).
+        if self.start.tzinfo is None or self.end.tzinfo is None:
+            raise ValueError(
+                "window.start and window.end must include a timezone "
+                "(e.g. 2026-04-27T09:00:00Z); naive timestamps are rejected"
+            )
         if self.end <= self.start:
             raise ValueError("window.end must be after window.start")
         return self
@@ -50,6 +58,9 @@ class Scope(BaseModel):
     targets: list[str] = Field(min_length=1)
     out_of_scope: list[str] = Field(default_factory=list)
     egress_allowlist: list[str] = Field(default_factory=list)
+    # Read-only by default: the web pack refuses state-changing HTTP verbs
+    # (POST/PUT/PATCH/DELETE) unless the operator explicitly opts in here.
+    allow_write_methods: bool = False
 
     @field_validator("targets", "out_of_scope")
     @classmethod

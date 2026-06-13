@@ -15,11 +15,12 @@ services:
     depends_on:
       - otel-collector
     cap_drop: [ALL]
-    cap_add: [NET_RAW, NET_ADMIN]   # NET_RAW for nmap; NET_ADMIN to render netpolicy
+    cap_add: [CHOWN, SETUID, SETGID, NET_RAW, NET_ADMIN]  # CHOWN/SETUID/SETGID: entrypoint chowns /audit then gosu-drops to uid 10001; NET_RAW for nmap; NET_ADMIN to render netpolicy
     read_only: true
     tmpfs:
       - /tmp
-    user: "10001:10001"
+    # No static `user:` - the entrypoint starts as root, fixes the audit-volume
+    # ownership, then drops to the unprivileged redteam user (uid 10001).
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
       OTEL_SERVICE_NAME: "redteam"

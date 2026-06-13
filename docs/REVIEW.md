@@ -18,6 +18,16 @@
 > `/assets` mount (harmless for host-path whitebox). See the per-finding
 > `fix_note` fields in `review-findings.json`.
 
+> **Update 2026-06-14 — RT-09, RT-10, RT-12, RT-13, RT-14, RT-15 fixed.** The
+> remaining six high-severity findings are done (18 tests in
+> `tests/test_fixes_rt09_15.py`; full suite 84 passed; ruff clean). Adversarial
+> re-review caught and then fixed two of them mid-batch: RT-12 (a naive-datetime
+> window would crash `covers()` — now rejected at parse) and RT-15 (an empty
+> `tools: []` became "inherit all" — now correctly zero, with malformed input
+> failing closed). All **14 of the critical/high findings (RT-01..RT-15) are now
+> resolved.** Next blocker for an actual container run is **RT-23** (the SDK
+> needs a writable `HOME` under the read-only rootfs).
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9

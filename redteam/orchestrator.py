@@ -160,6 +160,17 @@ class Orchestrator:
             }
         }
 
+    def within_window(self) -> bool:
+        """Is the engagement's hard time-bound currently active?"""
+        return self.engagement.window.covers(datetime.now(timezone.utc))
+
+    def _window_reason(self) -> str:
+        w = self.engagement.window
+        return (
+            f"outside engagement window "
+            f"{w.start.isoformat()}..{w.end.isoformat()}"
+        )
+
     async def _pre_tool_use(
         self, input_data: dict[str, Any], tool_use_id: str | None, context: Any
     ) -> dict[str, Any]:
@@ -169,6 +180,21 @@ class Orchestrator:
         session_id = input_data.get("session_id", "")
 
         try:
+            # Time-window gate: the engagement is only authorized inside its
+            # window, including a run that started valid but crossed window.end.
+            if not self.within_window():
+                reason = self._window_reason()
+                self.audit.record_pre_tool(
+                    session_id=session_id,
+                    tool_use_id=tool_use_id,
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    decision="deny",
+                    reason=reason,
+                )
+                self.telemetry.event_tool_denied(tool_name, reason)
+                return self._deny(reason)
+
             # Budget gate.
             target = _extract_target_for_budget(tool_input)
             breach = self.budget.exceeded(target)
@@ -253,13 +279,12 @@ class Orchestrator:
             if not f.exists():
                 continue
             meta, body = _parse_frontmatter(f.read_text(encoding="utf-8"))
-            tools = meta.get("tools")
             out[name] = AgentDefinition(
                 description=meta.get("description", f"{name} subagent"),
                 prompt=body,
                 # Map the frontmatter tool names to the SDK's mcp__ form so the
-                # per-subagent tool subset is actually enforced.
-                tools=[_sdk_tool_name(t) for t in tools] if tools else None,
+                # per-subagent tool subset is actually enforced (least privilege).
+                tools=_map_subagent_tools(meta),
             )
         return out
 
@@ -300,6 +325,23 @@ def _extract_target_for_budget(tool_input: dict[str, Any]) -> str | None:
         if isinstance(v, str) and v:
             return v
     return None
+
+
+def _map_subagent_tools(meta: dict[str, Any]) -> list[str] | None:
+    """Map a subagent's frontmatter ``tools:`` to SDK tool names.
+
+    Least-privilege semantics, distinguishing the three cases carefully:
+      - absent / null  -> None  (SDK default: inherit the parent's tools)
+      - a list         -> mapped names; an *empty* list stays empty (ZERO tools,
+                          NOT None - so ``tools: []`` restricts rather than grants)
+      - anything else  -> [] (fail closed: a malformed restriction grants nothing)
+    """
+    raw = meta.get("tools")
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        return [_sdk_tool_name(str(t)) for t in raw]
+    return []
 
 
 def _sdk_tool_name(name: str) -> str:

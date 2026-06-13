@@ -143,7 +143,9 @@ def _resolve(root: Path, p: Path, require_exists: bool) -> Path:
 def _count_files(p: Path) -> int:
     if p.is_file():
         return 1
-    return sum(1 for _ in p.rglob("*") if _.is_file())
+    # Don't follow symlinks out of the asset tree (a count is harmless, but the
+    # same rglob discipline matters for whitebox reads - keep it consistent).
+    return sum(1 for f in p.rglob("*") if f.is_file() and not f.is_symlink())
 
 
 def _index_source_repo(p: Path, language: str) -> dict[str, Any]:

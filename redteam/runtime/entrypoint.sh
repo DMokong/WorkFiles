@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
-# Container entrypoint: render egress netpolicy from engagement YAML, then
-# exec the redteam CLI. Runs as the non-root `redteam` user; netpolicy
-# rendering uses CAP_NET_ADMIN granted in compose.
+# Container entrypoint: chown the audit volume + render egress netpolicy (as
+# root), then drop to the unprivileged `redteam` user and exec the CLI.
 set -euo pipefail
+
+# Privileged setup, then drop privileges. A named `audit` volume mounts as
+# root:root over the image's /audit, so the non-root user cannot write the
+# ledger unless we fix ownership first. Re-exec self as `redteam` via gosu.
+if [[ "$(id -u)" == "0" ]]; then
+    mkdir -p /audit && chown redteam:redteam /audit
+    # (netpolicy rendering, which also needs root, belongs here too.)
+    exec gosu redteam "$0" "$@"
+fi
 
 ENGAGEMENT_FILE="${ENGAGEMENT_FILE:-/engagement.yaml}"
 

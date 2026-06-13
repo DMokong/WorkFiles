@@ -15,7 +15,9 @@ from ._sdk_shim import create_sdk_mcp_server, tool
 
 PACK_NAME = "web"
 
-_ALLOWED_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"})
+_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_ALLOWED_METHODS = _READ_METHODS | _WRITE_METHODS
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -63,6 +65,11 @@ def build_pack(ctx: ToolContext):
         method_upper = method.upper()
         if method_upper not in _ALLOWED_METHODS:
             raise ValueError(f"method {method!r} not allowed; choose from {sorted(_ALLOWED_METHODS)}")
+        if method_upper in _WRITE_METHODS and not ctx.engagement.scope.allow_write_methods:
+            raise PermissionError(
+                f"method {method_upper} is a state-changing verb; the engagement is "
+                "read-only (set scope.allow_write_methods: true to authorize writes)"
+            )
 
         req = urllib.request.Request(url, method=method_upper)
         for k, v in (headers or {}).items():

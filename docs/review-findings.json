@@ -19,7 +19,16 @@
         "RT-19",
         "RT-26 (partial)"
       ]
-    }
+    },
+    "fix_batches": [
+      {
+        "batch": "RT-09,RT-10,RT-12,RT-13,RT-14,RT-15",
+        "date": "2026-06-14",
+        "tests": "tests/test_fixes_rt09_15.py (18 cases); full suite 84 passed; ruff clean",
+        "verification": "adversarial workflow (6 finders + regression hunter); RT-12 (naive-datetime crash) and RT-15 (empty-list->inherit-all) found and fixed, then re-verified",
+        "residual": "RT-23 (writable HOME for SDK state) surfaced as the next blocker to a live container run"
+      }
+    ]
   },
   "findings": [
     {
@@ -152,27 +161,29 @@
       "title": "whitebox repo_grep (and asset file-count) follow symlinks out of the read-only mount",
       "severity": "high",
       "kind": "security",
-      "status": "confirmed",
+      "status": "FIXED (verified) \u2014 confirmed",
       "files": [
         "redteam/tools/whitebox.py:63-96",
         "redteam/assets.py:123-127"
       ],
       "evidence": "repo_read is safe (_resolve_under_assets resolves symlinks THEN checks containment). repo_grep is not: it rglob()s the repo and read_text()s every file with no symlink/containment check, so a symlink inside an operator-cloned target repo (attacker-influenceable content) pointing at /etc/passwd or /run/secrets/gh_token is read and returned to the agent. assets._count_files rglob likewise follows symlinks. Both whitebox tools are in _TARGETLESS_TOOLS, so the scope-guard gate never inspects them \u2014 the tool 'lock' is the only defence and it is missing here.",
       "repro": "Plant repo/link -> /run/secrets/gh_token; repo_grep '.*' returns the secret.",
-      "fix": "Resolve+contain every path repo_grep visits (reuse _resolve_under_assets); skip symlinks pointing outside roots; pass follow/recurse_symlinks=False; add a symlink-escape test."
+      "fix": "Resolve+contain every path repo_grep visits (reuse _resolve_under_assets); skip symlinks pointing outside roots; pass follow/recurse_symlinks=False; add a symlink-escape test.",
+      "fix_note": "FIXED: repo_grep now skips any file resolving outside the repo root (symlink containment); _count_files skips symlinks. Tested."
     },
     {
       "id": "RT-10",
       "title": "web__http_request allows write verbs and follows redirects with no enforcement",
       "severity": "high",
       "kind": "security",
-      "status": "confirmed",
+      "status": "FIXED (verified) \u2014 confirmed",
       "files": [
         "redteam/tools/web.py:16,42-78"
       ],
       "evidence": "_ALLOWED_METHODS includes POST/PUT/PATCH/DELETE; the 'no write/delete' rule lives only in prompts, enforced nowhere. urllib follows redirects (see RT-01). A confused/compromised agent can issue destructive HTTP against an in-scope target and be redirected off-scope.",
       "repro": "web__http_request(url=in-scope, method='DELETE') is permitted by the tool.",
-      "fix": "Gate write methods behind an explicit engagement flag (default read-only: GET/HEAD/OPTIONS); disable auto-redirect or re-scope each hop."
+      "fix": "Gate write methods behind an explicit engagement flag (default read-only: GET/HEAD/OPTIONS); disable auto-redirect or re-scope each hop.",
+      "fix_note": "FIXED: write verbs (POST/PUT/PATCH/DELETE) refused unless scope.allow_write_methods (default False). Read-only by default. Tested."
     },
     {
       "id": "RT-11",
@@ -193,47 +204,50 @@
       "title": "Engagement time-window is parsed but never enforced",
       "severity": "high",
       "kind": "missing-validation",
-      "status": "confirmed",
+      "status": "FIXED (verified) \u2014 confirmed",
       "files": [
         "redteam/engagement.py:33-46"
       ],
       "evidence": "Window.covers() is dead code (no caller). PLAN calls the window a 'hard time bound', but an engagement YAML authorizes a run at any time, forever. This is NOT flagged as a stub \u2014 engagement.py is on the 'real and tested' list.",
       "repro": "grep -rn 'covers(' redteam/ -> only the definition.",
-      "fix": "Check the window at session start and in _pre_tool_use (deny + ledger entry when outside); decide the naive-timestamp policy explicitly."
+      "fix": "Check the window at session start and in _pre_tool_use (deny + ledger entry when outside); decide the naive-timestamp policy explicitly.",
+      "fix_note": "FIXED: time-window enforced in cli (refuse, exit 4) and on every tool call (_pre_tool_use deny); naive timestamps rejected at parse so covers() can't crash. Tested."
     },
     {
       "id": "RT-13",
       "title": "redteam-verify exits 0 with only a WARN when no HMAC key is supplied",
       "severity": "high",
       "kind": "security",
-      "status": "confirmed",
+      "status": "FIXED (verified) \u2014 confirmed",
       "files": [
         "redteam/ledger/verify.py:53-62"
       ],
       "evidence": "PLAN's documented auditor flow is 'redteam-verify <ledger> <seal>' (no key). Without --hmac-key-file, verify prints WARN and returns 0 though it only checked that the seal's head_hash/entry_count match the attacker-recomputable chain. An attacker who truncates the ledger, recomputes head, and rewrites the seal JSON passes with exit 0. The HMAC is the only trust anchor and it is skipped.",
       "repro": "redteam-verify ledger.jsonl ledger.seal (no key) -> 'OK ... WARN: signature not checked', exit 0.",
-      "fix": "Exit non-zero when a seal is present but unverifiable; for KMS seals require kms:VerifyMac and dispatch on seal['method']."
+      "fix": "Exit non-zero when a seal is present but unverifiable; for KMS seals require kms:VerifyMac and dispatch on seal['method'].",
+      "fix_note": "FIXED: redteam-verify fails closed when a seal is present but unverifiable (file w/o key->7, kms w/o creds->8, wrong key->6); chain-only->0; dispatches on seal['method']. Tested."
     },
     {
       "id": "RT-14",
       "title": "Audit named volume is root-owned and shadows the Dockerfile chown; non-root uid cannot write the ledger",
       "severity": "high",
       "kind": "bug",
-      "status": "confirmed",
+      "status": "FIXED (verified) \u2014 confirmed",
       "files": [
         "redteam/runtime/docker-compose.yml:22,33,67",
         "redteam/runtime/Dockerfile:49-51"
       ],
       "evidence": "Dockerfile chowns /audit to uid 10001, but the named volume 'audit:' mounts over /audit at runtime created root:root, so uid 10001 cannot write \u2014 the first ledger append fails. Classic Docker volume-ownership gotcha.",
       "repro": "docker compose up redteam -> PermissionError writing /audit/<id>.jsonl.",
-      "fix": "Pre-create/chown the volume dir via an init step, set the volume uid, or chown in entrypoint with the needed privilege; add a container smoke test that writes one ledger entry."
+      "fix": "Pre-create/chown the volume dir via an init step, set the volume uid, or chown in entrypoint with the needed privilege; add a container smoke test that writes one ledger entry.",
+      "fix_note": "FIXED: container starts as root, entrypoint chowns the audit volume then drops to redteam via gosu (added to image; CHOWN/SETUID/SETGID caps). Container-only change, not unit-tested. Residual: RT-23 (SDK ~/.claude needs a writable HOME under read_only rootfs) still blocks a full live run."
     },
     {
       "id": "RT-15",
       "title": "Subagent tool-scoping is not enforced; frontmatter is loaded as a raw prompt string",
       "severity": "high",
       "kind": "security",
-      "status": "confirmed",
+      "status": "FIXED (verified) \u2014 confirmed",
       "files": [
         "redteam/orchestrator.py:208-215",
         "redteam/subagents/exploiter.md"
@@ -241,7 +255,7 @@
       "evidence": "_build_subagents reads each .md as a string and passes it as the agent value. The YAML frontmatter 'tools:' (the deliberately narrow set for the dangerous exploiter) is never parsed into an AgentDefinition tool subset \u2014 so per-subagent tool restriction is cosmetic and the frontmatter leaks into the prompt as literal text. Frontmatter tool names also wouldn't match SDK names (see RT-05).",
       "repro": "Inspect options['agents'] from _build_subagents \u2014 a markdown string, not a tools-restricted AgentDefinition.",
       "fix": "Parse frontmatter; build AgentDefinition(description, prompt, tools=<mapped subset>); restrict each subagent to its tools.",
-      "fix_note": "PARTIALLY addressed: subagents are now AgentDefinition objects with frontmatter tools mapped to mcp__ names (per-subagent tool subset now wired); full enforcement depends on SDK applying the subset."
+      "fix_note": "FIXED: subagents are AgentDefinition with a mapped tool subset; empty list stays zero (not inherit-all), malformed tools fail closed, absent=inherit. Tested. (Runtime SDK enforcement of AgentDefinition.tools is assumed per SDK contract.)"
     },
     {
       "id": "RT-16",
