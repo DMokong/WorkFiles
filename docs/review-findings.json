@@ -27,6 +27,13 @@
         "tests": "tests/test_fixes_rt09_15.py (18 cases); full suite 84 passed; ruff clean",
         "verification": "adversarial workflow (6 finders + regression hunter); RT-12 (naive-datetime crash) and RT-15 (empty-list->inherit-all) found and fixed, then re-verified",
         "residual": "RT-23 (writable HOME for SDK state) surfaced as the next blocker to a live container run"
+      },
+      {
+        "batch": "RT-23",
+        "date": "2026-06-24",
+        "tests": "tests/test_fixes_rt23.py (21 cases) + tests/container/smoke_rt23.sh (real docker compose run); full suite 105 passed; ruff clean",
+        "verification": "adversarial workflow (renderer-security + entrypoint/container + regression hunter); F1 (overlapping allow-list -> nft reject -> boot DoS) and F2 (string-vs-parsed IMDS scrub bypassable by non-canonical IPv6) found and fixed, then re-verified in-container; engagement-path single-sourcing added after the entrypoint reviewer flagged netpolicy/CLI could read two different engagements",
+        "residual": "RT-23 fully fixed and live-container-verified; the harness can now complete read-only-rootfs startup. Remaining open findings are the lower-severity hardening sweep (RT-11, RT-16..RT-22, RT-24..RT-31)."
       }
     ]
   },
@@ -361,7 +368,7 @@
       "title": "Container hardening gaps: read-only rootfs may break SDK state; CAP_NET_ADMIN as non-root; netpolicy.json dead; secrets always required",
       "severity": "medium",
       "kind": "design-inconsistency",
-      "status": "confirmed/partial",
+      "status": "FIXED (verified) \u2014 confirmed end-to-end via docker smoke",
       "files": [
         "redteam/runtime/docker-compose.yml:17-37",
         "redteam/runtime/entrypoint.sh:14-25",
@@ -369,7 +376,8 @@
       ],
       "evidence": "read_only:true with only /tmp and /audit writable likely breaks the SDK's ~/.claude session-JSONL writes that PLAN says are mirrored into the ledger. CAP_NET_ADMIN is granted to render iptables, but the entrypoint runs as uid 10001 and only logs (renders nothing) \u2014 default-deny egress is unenforced (CLAUDE.md #3 stub) AND netpolicy.json is consumed by no code (its JSONPath is never evaluated). atlassian_token is mounted unconditionally even when external_mcp is empty, and .secrets/* must exist or compose fails.",
       "repro": "Inspect entrypoint (logs only), netpolicy consumers (none), and HOME writability under read_only.",
-      "fix": "Render egress rules (nft) from the allowlist; give the SDK a writable state dir (tmpfs HOME or point it at /tmp); consume or delete netpolicy.json; mount atlassian_token only when enabled."
+      "fix": "Render egress rules (nft) from the allowlist; give the SDK a writable state dir (tmpfs HOME or point it at /tmp); consume or delete netpolicy.json; mount atlassian_token only when enabled.",
+      "fix_note": "FIXED: (1) writable SDK state \u2014 /home/redteam tmpfs; entrypoint exports HOME + CLAUDE_CONFIG_DIR, chowns it, and write-probes it as uid 10001 under read_only (fail-closed exit 71; same for /audit, exit 72). (2) egress \u2014 new redteam/runtime/render_netpolicy.py CONSUMES netpolicy.json (evaluates from_engagement JSONPath), renders an nft default-deny ruleset (IMDS dropped before any accept; parsed-address scrub; overlapping allow entries collapsed via collapse_addresses so nft never rejects); entrypoint loads it via `nft -f -` and fails closed (exit 70) unless REDTEAM_NETPOLICY_OPTIONAL=1. (3) netpolicy is rendered from the SAME engagement the CLI runs (single-source the path; CMD ['run'] + appended $ENGAGEMENT_FILE). (4) atlassian_token moved to opt-in docker-compose.atlassian.yml overlay; base no longer requires it. nftables added to the image. Unit-tested in tests/test_fixes_rt23.py (21 cases); real `docker compose run` smoke in tests/container/smoke_rt23.sh confirms read-only boot, HOME/audit writable, in-kernel nft default-deny with IMDS denied, and validate OK as uid 10001. Adversarially verified (3 reviewers): the boot-DoS-on-overlap (F1) and the string-vs-parsed IMDS scrub (F2) were found and fixed. Residual (low): DNS accept is to any host (covert-channel; documented limitation); resolved-hostname IP sets can drift (host netpolicy/SG is the durable backstop)."
     },
     {
       "id": "RT-24",

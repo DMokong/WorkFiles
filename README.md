@@ -47,16 +47,20 @@ pytest
 mkdir -p .secrets
 echo  "$ANTHROPIC_API_KEY"  > .secrets/anthropic_api_key
 echo  "$GH_PAT"             > .secrets/gh_token
-echo  "$ATLASSIAN_TOKEN"    > .secrets/atlassian_token
 chmod 600 .secrets/*
 
 # Pre-clone target repos for the whitebox surface.
 gh repo clone myorg/example-api ./targets/example-api
 
-ENGAGEMENT=engagements/example.yaml \
+# ENGAGEMENT is the in-CONTAINER path (compose mounts ./engagements at /engagements).
+ENGAGEMENT=/engagements/example.yaml \
   docker compose -f redteam/runtime/docker-compose.yml up \
     --abort-on-container-exit redteam
 ```
+
+Only engagements whose `external_mcp` enables `atlassian` need the
+`atlassian_token` secret; create `.secrets/atlassian_token` and add the
+overlay `-f redteam/runtime/docker-compose.atlassian.yml`.
 
 The compose stack also brings up an OpenTelemetry collector and a local
 Grafana / Tempo dev stack on profile `dev`. In production, point
@@ -104,7 +108,8 @@ CLAUDE.md               orientation for continuing AI sessions
 
 ## Status
 
-Greenfield blueprint. The schemas, scope guard, ledger, and orchestrator
-wiring are real and tested. Tool-pack bodies, KMS sealer, SSH-sig parse
-hook, and the netpolicy renderer are stubbed and clearly marked.
+Greenfield blueprint. The schemas, scope guard, ledger, orchestrator
+wiring, and the egress netpolicy renderer (RT-23) are real and tested.
+Tool-pack bodies, the KMS sealer, and the SSH-sig parse hook are stubbed
+and clearly marked.
 [CLAUDE.md](CLAUDE.md) lists the suggested next-steps order.

@@ -28,6 +28,29 @@
 > resolved.** Next blocker for an actual container run is **RT-23** (the SDK
 > needs a writable `HOME` under the read-only rootfs).
 
+> **Update 2026-06-24 — RT-23 fixed (container run unblocked).** The read-only
+> rootfs container now completes startup end-to-end. The entrypoint gives the
+> SDK a writable state dir (`/home/redteam` tmpfs → `HOME`/`CLAUDE_CONFIG_DIR`,
+> chowned + write-probed as uid 10001, fail-closed exit 71/72), and a new
+> `redteam/runtime/render_netpolicy.py` **consumes** `netpolicy.json` to render
+> the engagement's `egress_allowlist` into an **nft default-deny** ruleset
+> (IMDS dropped before any accept; loaded via `nft -f -`, fail-closed exit 70).
+> `atlassian_token` became an opt-in overlay (`docker-compose.atlassian.yml`).
+> 21 unit tests (`tests/test_fixes_rt23.py`) + a real `docker compose run`
+> smoke (`tests/container/smoke_rt23.sh`); full suite 105 passed; ruff clean.
+> Adversarial re-review caught and fixed two defects mid-batch: **F1** — an
+> overlapping allow-list (host + its CIDR) made `nft -f` reject the ruleset and
+> brick the boot (now collapsed with `ipaddress.collapse_addresses`); **F2** —
+> the IMDS allow-set scrub was string-compared, so a non-canonical IPv6 IMDS
+> spelling slipped in (the explicit drop still won by ordering; now scrubbed by
+> parsed address). The reviewers also flagged that the renderer and the CLI
+> could read two *different* engagements, so the egress box and the run are now
+> pinned to a single engagement path. Residual (low, documented): DNS egress is
+> accepted to any host (covert channel); resolved-hostname IP sets can drift
+> (the host network policy / security group is the durable backstop). With
+> RT-23 done, the remaining open items are the lower-severity hardening sweep
+> (RT-11, RT-16–RT-22, RT-24–RT-31).
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9

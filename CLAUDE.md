@@ -65,6 +65,11 @@ docs/PLAN.md            full design doc
 - `redteam/ledger/chain.py` — hash-chained append, replay, tamper detection
 - `redteam/assets.py` — read-only mount index with metadata
 - `redteam/orchestrator.py` — hook dispatch, budget gate, subagent loading
+- `redteam/runtime/render_netpolicy.py` + `entrypoint.sh` — render
+  `scope.egress_allowlist` into an nft default-deny ruleset (IMDS denied
+  first; overlapping entries collapsed) and load it before privilege drop;
+  unit-tested in `tests/test_fixes_rt23.py` and smoke-checked end-to-end via
+  `tests/container/smoke_rt23.sh` (RT-23)
 
 **Stubbed / blueprint-only (clearly marked):**
 - `redteam/auth.py` — shells to ssh-keygen but isn't called from the
@@ -73,9 +78,11 @@ docs/PLAN.md            full design doc
   still uses the file-key path; add a `Sealer` protocol and switch
 - `redteam/tools/{recon,web,cloud,network,whitebox,report}.py` — all
   are MCP-shaped but most tool bodies return `not_implemented`
-- `redteam/runtime/entrypoint.sh` — netpolicy rendering is a TODO log
 - `redteam/runtime/docker-compose.yml` — references `.secrets/` files
-  that do not exist; create them before bringing the stack up
+  (`anthropic_api_key`, `gh_token`) that do not exist; create them before
+  bringing the stack up. `atlassian_token` is opt-in via the
+  `docker-compose.atlassian.yml` overlay (only when an engagement enables
+  the atlassian MCP).
 
 ## Conventions
 
@@ -100,10 +107,11 @@ redteam run engagements/example.yaml --dry-run # build options without calling S
 pytest                                         # 7 contract test files
 ```
 
-Container path:
+Container path (`ENGAGEMENT` is the in-CONTAINER path; compose mounts
+`./engagements` at `/engagements`):
 
 ```bash
-ENGAGEMENT=engagements/example.yaml \
+ENGAGEMENT=/engagements/example.yaml \
   docker compose -f redteam/runtime/docker-compose.yml up --abort-on-container-exit redteam
 ```
 
@@ -114,8 +122,10 @@ ENGAGEMENT=engagements/example.yaml \
 2. **Add a `Sealer` protocol to `LedgerWriter`** and switch the default
    to `KmsHmacSealer` when `REDTEAM_KMS_KEY_ID` is set, file-key
    otherwise. Update `verify.py` to dispatch on `seal["method"]`.
-3. **Render `scope.egress_allowlist` into iptables in `entrypoint.sh`.**
-   Right now it only logs.
+3. ~~Render `scope.egress_allowlist` into nftables in `entrypoint.sh`.~~
+   **Done (RT-23):** `redteam/runtime/render_netpolicy.py` renders a
+   default-deny nft ruleset (IMDS denied first, overlapping entries
+   collapsed); the entrypoint loads it and fails closed.
 4. **Implement the recon `gh_*` tools** as wrappers around the `gh` CLI
    so the agent can search the org's GitHub for context without an MCP.
 5. **Implement Atlassian MCP wiring + Jira upsert in `report.py`** with

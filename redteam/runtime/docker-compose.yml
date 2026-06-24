@@ -6,6 +6,11 @@
 #
 # Override OTEL_EXPORTER_OTLP_ENDPOINT to ship to the central org Grafana
 # stack instead of the bundled local one.
+#
+# The atlassian_token secret is NOT mounted by default. When an engagement's
+# external_mcp includes `atlassian`, add the overlay:
+#   docker compose -f redteam/runtime/docker-compose.yml \
+#     -f redteam/runtime/docker-compose.atlassian.yml up ...
 services:
   redteam:
     build:
@@ -15,10 +20,11 @@ services:
     depends_on:
       - otel-collector
     cap_drop: [ALL]
-    cap_add: [CHOWN, SETUID, SETGID, NET_RAW, NET_ADMIN]  # CHOWN/SETUID/SETGID: entrypoint chowns /audit then gosu-drops to uid 10001; NET_RAW for nmap; NET_ADMIN to render netpolicy
+    cap_add: [CHOWN, SETUID, SETGID, NET_RAW, NET_ADMIN]  # CHOWN/SETUID/SETGID: entrypoint chowns /audit then gosu-drops to uid 10001; NET_RAW for nmap; NET_ADMIN: entrypoint loads the nft egress ruleset
     read_only: true
     tmpfs:
       - /tmp
+      - /home/redteam   # writable SDK state ($HOME/.claude) under the read-only rootfs (RT-23)
     # No static `user:` - the entrypoint starts as root, fixes the audit-volume
     # ownership, then drops to the unprivileged redteam user (uid 10001).
     environment:
@@ -35,7 +41,7 @@ services:
     secrets:
       - anthropic_api_key
       - gh_token
-      - atlassian_token
+      # atlassian_token is added by docker-compose.atlassian.yml when needed.
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.103.1
@@ -72,5 +78,3 @@ secrets:
     file: ../../.secrets/anthropic_api_key
   gh_token:
     file: ../../.secrets/gh_token
-  atlassian_token:
-    file: ../../.secrets/atlassian_token

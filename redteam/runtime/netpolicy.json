@@ -1,5 +1,5 @@
 {
-  "$comment": "Default-deny egress template. Entrypoint renders this from scope.egress_allowlist into iptables/nftables. Only the Anthropic API endpoint is always permitted. The cloud metadata endpoint (169.254.169.254) is deliberately NOT allow-listed: the agent's tools must never reach IMDS, or an SSRF/redirect could exfiltrate the harness's workload-role credentials. boto3/KMS obtain credentials via the workload role on a path the agent's HTTP tools cannot use (e.g. a separate network namespace or a credential sidecar); if IMDS access is unavoidable, require IMDSv2 with hop-limit 1.",
+  "$comment": "Default-deny egress template, consumed by redteam.runtime.render_netpolicy and loaded with `nft -f -` by the container entrypoint. always_allow + from_engagement form the allow-list; deny_egress endpoints are dropped before any accept. The cloud metadata endpoint (169.254.169.254 / fd00:ec2::254) is deliberately denied: the agent's tools must never reach IMDS, or an SSRF/redirect could exfiltrate the harness's workload-role credentials. boto3/KMS obtain credentials via the workload role on a path the agent's HTTP tools cannot use (e.g. a separate network namespace or a credential sidecar); if IMDS access is unavoidable, require IMDSv2 with hop-limit 1.",
   "policy": "default-deny",
   "always_allow": [
     "api.anthropic.com"
@@ -11,5 +11,5 @@
   "from_engagement": [
     "$.scope.egress_allowlist[*]"
   ],
-  "deny_log": "/audit/netpolicy.log"
+  "$deny_log_note": "Dropped packets are logged to the kernel ring buffer (journald) with the nft prefix 'redteam-egress-drop '; there is no separate netpolicy.log file in v1."
 }

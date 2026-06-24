@@ -1,0 +1,20 @@
+# Opt-in overlay: mount the Atlassian Rovo MCP token.
+#
+# Only use this when the engagement's `external_mcp` includes `atlassian`
+# (see CLAUDE.md hard constraint #2 -- atlassian is the ONLY permitted external
+# MCP). The base compose deliberately omits this secret so a run that does not
+# use Atlassian neither requires nor mounts the token.
+#
+# Usage (from the repo root):
+#   ENGAGEMENT=engagements/example.yaml docker compose \
+#     -f redteam/runtime/docker-compose.yml \
+#     -f redteam/runtime/docker-compose.atlassian.yml \
+#     up --abort-on-container-exit redteam
+services:
+  redteam:
+    secrets:
+      - atlassian_token
+
+secrets:
+  atlassian_token:
+    file: ../../.secrets/atlassian_token

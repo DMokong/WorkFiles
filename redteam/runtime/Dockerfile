@@ -7,7 +7,8 @@ FROM python:3.12-slim
 # - whois, dnsutils: recon pack
 # - nmap: network pack
 # - jq, curl: ad-hoc inspection by the agent
-# - iptables: rendered netpolicy at entrypoint
+# - nftables: the entrypoint renders scope.egress_allowlist into an nft ruleset
+#   (default-deny egress) and loads it before dropping privileges
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
@@ -15,8 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gh \
         git \
         gosu \
-        iptables \
         jq \
+        nftables \
         nmap \
         openssh-client \
         unzip \
@@ -57,4 +58,6 @@ RUN useradd -m -u 10001 -s /usr/sbin/nologin redteam \
 COPY redteam/runtime/entrypoint.sh /opt/redteam/entrypoint.sh
 RUN chmod +x /opt/redteam/entrypoint.sh
 ENTRYPOINT ["/opt/redteam/entrypoint.sh"]
-CMD ["run", "/engagement.yaml"]
+# Just the subcommand: the entrypoint appends the engagement path from
+# $ENGAGEMENT_FILE so the rendered egress netpolicy and the run use the same file.
+CMD ["run"]
