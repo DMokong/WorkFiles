@@ -51,6 +51,32 @@
 > RT-23 done, the remaining open items are the lower-severity hardening sweep
 > (RT-11, RT-16–RT-22, RT-24–RT-31).
 
+> **Update 2026-06-26 — M0+M1: the harness can run a contained engagement
+> end-to-end (closes RT-21 and the CLI-run slice of RT-26).** *M0 (runnable
+> transport):* the runtime image now ships Node + a pinned
+> `@anthropic-ai/claude-code` (the Agent SDK spawns the `claude` CLI as its
+> transport); a new `redteam doctor [--probe]` command + `redteam/preflight.py`
+> verify readiness without spending a token, and the entrypoint now gates the
+> egress netpolicy + engagement-path append to engagement-bearing subcommands so
+> diagnostics work with no engagement mounted. Proven in-container:
+> `docker compose run redteam doctor --probe` shows the SDK spawning the CLI
+> transport under the read-only rootfs. *M1 (trustworthy output):* the report
+> SARIF write is now atomic (temp + `os.replace`, serialize-first) and
+> lock-serialized (**RT-21 fixed**), with a corrupt base quarantined; the CLI
+> `run` path fails closed with clean exit codes (RT-26 CLI slice); and the
+> cage-validation (allow / deny / outside-window / fail-closed, each recorded in
+> the ledger) plus an end-to-end seal→`redteam-verify`→SARIF flow are pinned as
+> contract tests. 32 new tests (full suite 135 passed; ruff clean).
+> Adversarial re-review (3 reviewers) caught and fixed a probe that orphaned the
+> `claude` subprocess on timeout, a `cli_missing`-vs-`sdk_missing` mislabel,
+> `find_cli` diverging from the SDK's fallback paths, and `doctor --probe`
+> phoning home with no egress box (CLI telemetry/autoupdater now disabled at the
+> image). **Residual:** a true *autonomous* live run needs model credentials
+> (`ANTHROPIC_API_KEY`, or `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX` + creds, with the
+> backend host added to `egress_allowlist`) — everything up to that boundary is
+> verified; `engagements/whitebox-first.example.yaml` is the contained first-run
+> template. RT-17 and the seal-swallow slice of RT-26 stay open.
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9

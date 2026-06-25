@@ -6,7 +6,11 @@ ledger (tamper-evident).
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,11 +27,15 @@ def build_pack(ctx: ToolContext):
     # No filesystem side effects at build time (keeps --dry-run clean). The
     # SARIF file is created lazily on the first finding.
     sarif_path = Path(ctx.engagement.reporting.destination)
+    # Serialize the read-modify-write so concurrent subagent findings can't
+    # clobber each other (RT-17/RT-21). The atomic temp+rename below protects
+    # against a crash mid-write; the lock protects against interleaving.
+    write_lock = asyncio.Lock()
 
     def _ensure_sarif() -> None:
         if not sarif_path.exists():
             sarif_path.parent.mkdir(parents=True, exist_ok=True)
-            sarif_path.write_text(_empty_sarif(), encoding="utf-8")
+            _atomic_write_json(sarif_path, json.loads(_empty_sarif()))
 
     @tool(
         "report__write_finding",
@@ -62,9 +70,10 @@ def build_pack(ctx: ToolContext):
             "ts": datetime.now(timezone.utc).isoformat(),
             "engagement_id": ctx.engagement.id,
         }
-        ctx.audit.record_finding(finding)
-        _ensure_sarif()
-        _append_sarif_result(sarif_path, finding)
+        async with write_lock:
+            ctx.audit.record_finding(finding)
+            _ensure_sarif()
+            _append_sarif_result(sarif_path, finding)
         return {"recorded": True, "title": title, "severity": severity}
 
     return create_sdk_mcp_server(
@@ -96,8 +105,39 @@ def _empty_sarif() -> str:
     )
 
 
+def _atomic_write_json(path: Path, obj: Any) -> None:
+    """Write JSON to ``path`` atomically: serialize, write a temp file in the
+    same directory, fsync, then ``os.replace``.
+
+    Serializing first means an un-encodable object raises before any file is
+    touched (the existing file and disk stay clean). The temp+rename means a
+    crash mid-write can never leave a half-written/corrupt SARIF doc.
+    """
+    data = json.dumps(obj, indent=2)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
 def _append_sarif_result(path: Path, finding: dict[str, Any]) -> None:
-    doc = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # The base file was corrupted out-of-band. Quarantine it and start a
+        # fresh SARIF so this finding still lands (the ledger remains the
+        # authoritative, tamper-evident record).
+        with contextlib.suppress(OSError):
+            path.replace(path.with_name(path.name + ".corrupt"))
+        doc = json.loads(_empty_sarif())
     level = {"info": "note", "low": "note", "medium": "warning", "high": "error", "critical": "error"}[
         finding["severity"]
     ]
@@ -117,4 +157,4 @@ def _append_sarif_result(path: Path, finding: dict[str, Any]) -> None:
             {"physicalLocation": {"artifactLocation": {"uri": finding["location"]}}}
         ]
     doc["runs"][0]["results"].append(result)
-    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    _atomic_write_json(path, doc)

@@ -1,0 +1,67 @@
+# Contained first engagement — whitebox-only, no live network targets.
+#
+# This is the lowest-blast-radius way to run the harness end-to-end: the agent
+# reads the operator-cloned source under the read-only /assets mount and records
+# findings; it makes NO calls to external systems. Use it for the first real run
+# (M0/M1) to prove the agent loop, the scope-guard cage, and the sealed audit
+# trail before pointing the harness at any live target.
+#
+# Run (contained dev first-run; --skip-signature avoids needing a signed .sig):
+#   gh repo clone myorg/example-api ./targets/example-api
+#   ENGAGEMENT=/engagements/whitebox-first.example.yaml docker compose \
+#     -f redteam/runtime/docker-compose.yml run --rm redteam run --skip-signature
+#
+# Model backend: set ANTHROPIC_API_KEY (or CLAUDE_CODE_USE_BEDROCK/_VERTEX +
+# creds) in the container env, and add the backend host to egress_allowlist
+# below (api.anthropic.com is here; for Bedrock add bedrock-runtime.<region>.
+# amazonaws.com, for Vertex <region>-aiplatform.googleapis.com). Confirm with
+# `... run --rm redteam doctor --probe` first.
+id: ENG-WHITEBOX-FIRST
+operator: alice@example.com
+authorized_by: ciso@example.com
+
+# Narrow this window to your actual run; the harness refuses outside it (RT-12).
+window:
+  start: 2026-06-01T00:00:00Z
+  end:   2026-12-31T23:59:59Z
+
+scope:
+  # whitebox + report are targetless (they operate on the asset mount), but the
+  # schema requires at least one target; this nominal RFC-1918 range is never
+  # contacted because no network tool is loaded.
+  targets:
+    - 10.0.0.0/8
+  egress_allowlist:
+    - api.anthropic.com        # the model backend (see header for Bedrock/Vertex)
+
+assets:
+  source_repos:
+    - path: ./targets/example-api
+      language: python
+      role: backend
+
+budget:
+  max_turns: 40
+  max_usd: 5.00
+  max_tool_calls_per_target: 50
+
+tools:
+  - whitebox
+  - report
+
+subagents: [whitebox, analyst]
+
+external_mcp: []
+
+objective: |
+  Read-only whitebox review of the backend source under the /assets mount.
+  Use whitebox__repo_grep and whitebox__repo_read to locate the code paths
+  that authenticate requests or return user data, and record each concrete
+  weakness via report__write_finding with a title, severity, file:line
+  location, and evidence. Make NO network calls and NO writes. Stop when the
+  authentication and data-access paths have been reviewed or the budget is
+  exhausted.
+
+reporting:
+  format: sarif
+  destination: /audit/findings.sarif

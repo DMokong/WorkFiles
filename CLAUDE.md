@@ -70,6 +70,17 @@ docs/PLAN.md            full design doc
   first; overlapping entries collapsed) and load it before privilege drop;
   unit-tested in `tests/test_fixes_rt23.py` and smoke-checked end-to-end via
   `tests/container/smoke_rt23.sh` (RT-23)
+- `redteam/tools/report.py` — atomic SARIF writer (temp + `os.replace`,
+  serialize-first) under an asyncio.Lock; corrupt base quarantined (RT-21)
+- `redteam/preflight.py` + `redteam doctor [--probe]` — readiness checks
+  (claude CLI present/recent, model backend incl. Bedrock/Vertex, writable
+  dirs); `--probe` spawns the SDK transport to prove the agent loop launches
+- The runtime image ships **Node + a pinned `@anthropic-ai/claude-code`** —
+  the Agent SDK spawns the `claude` CLI as its transport, so the container
+  runs a *contained* engagement end-to-end (`engagements/whitebox-first.example.yaml`).
+  A true autonomous run still needs a model backend (key, or
+  `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX` + creds, with the backend host added to
+  `egress_allowlist`).
 
 **Stubbed / blueprint-only (clearly marked):**
 - `redteam/auth.py` — shells to ssh-keygen but isn't called from the
@@ -104,7 +115,8 @@ docs/PLAN.md            full design doc
 pip install -e ".[dev]"                       # install in editable mode
 redteam validate engagements/example.yaml      # parse-only check
 redteam run engagements/example.yaml --dry-run # build options without calling SDK
-pytest                                         # 7 contract test files
+redteam doctor                                 # readiness check (no token spend)
+pytest                                         # contract + RT/M-batch tests
 ```
 
 Container path (`ENGAGEMENT` is the in-CONTAINER path; compose mounts

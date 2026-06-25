@@ -37,6 +37,12 @@ redteam validate engagements/example.yaml
 # Build options without invoking the SDK (sanity-check wiring).
 redteam run engagements/example.yaml --dry-run
 
+# Check the container/host is ready to run an engagement (no token spend).
+# Inside the container, `doctor --probe` also confirms the SDK can spawn the
+# `claude` CLI transport. Shows the model backend it would use (direct key, or
+# Amazon Bedrock / Google Vertex via CLAUDE_CODE_USE_BEDROCK / _VERTEX).
+redteam doctor
+
 # Run the contract test suite.
 pytest
 ```
@@ -108,8 +114,16 @@ CLAUDE.md               orientation for continuing AI sessions
 
 ## Status
 
-Greenfield blueprint. The schemas, scope guard, ledger, orchestrator
-wiring, and the egress netpolicy renderer (RT-23) are real and tested.
-Tool-pack bodies, the KMS sealer, and the SSH-sig parse hook are stubbed
-and clearly marked.
+Maturing blueprint, built cage-first. Real and tested: the schemas, scope
+guard, hash-chained ledger, orchestrator/SDK wiring, the egress netpolicy
+renderer (RT-23), the atomic SARIF report writer (RT-21), and the
+whitebox/web tool bodies. The runtime image now ships Node + the `claude`
+CLI (the Agent SDK's transport), so the container runs a contained
+engagement end-to-end — use `redteam doctor --probe` to confirm readiness,
+and `engagements/whitebox-first.example.yaml` for the first contained run.
+A true *autonomous* run needs a model backend (`ANTHROPIC_API_KEY`, or
+Amazon Bedrock / Google Vertex via `CLAUDE_CODE_USE_BEDROCK` / `_VERTEX`).
+Still stubbed and clearly marked: the recon/cloud/network tool bodies, the
+KMS sealer, the SSH-sig parse hook, and the verify/dedup/enrich finding
+pipeline.
 [CLAUDE.md](CLAUDE.md) lists the suggested next-steps order.

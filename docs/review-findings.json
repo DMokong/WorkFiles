@@ -34,6 +34,14 @@
         "tests": "tests/test_fixes_rt23.py (21 cases) + tests/container/smoke_rt23.sh (real docker compose run); full suite 105 passed; ruff clean",
         "verification": "adversarial workflow (renderer-security + entrypoint/container + regression hunter); F1 (overlapping allow-list -> nft reject -> boot DoS) and F2 (string-vs-parsed IMDS scrub bypassable by non-canonical IPv6) found and fixed, then re-verified in-container; engagement-path single-sourcing added after the entrypoint reviewer flagged netpolicy/CLI could read two different engagements",
         "residual": "RT-23 fully fixed and live-container-verified; the harness can now complete read-only-rootfs startup. Remaining open findings are the lower-severity hardening sweep (RT-11, RT-16..RT-22, RT-24..RT-31)."
+      },
+      {
+        "batch": "M0+M1 (runtime runnable + contained-engagement trust; closes RT-21, CLI-run slice of RT-26)",
+        "date": "2026-06-26",
+        "tests": "tests/test_m0_doctor.py (18), test_m1_report.py (6), test_m1_cage.py (4), test_m1_engagement.py (1), test_m1_cli_failclosed.py (2); full suite 135 passed; ruff clean; in-container `docker compose run redteam doctor [--probe]` proves the SDK spawns the claude CLI transport under read-only rootfs",
+        "verification": "adversarial workflow (M0 runtime/doctor + M1 report/cage/RT-26 + regression hunter); fixed: probe orphaning the claude subprocess on timeout (connect/disconnect + shielded teardown), cli_missing-vs-sdk_missing mislabel, find_cli diverging from the SDK's fallback paths, doctor --probe phoning home with no egress box (CLI telemetry/autoupdater disabled at image level), a tautological cage assertion, brittle version parsing, and a corrupt-SARIF-base edge",
+        "scope": "M0: Dockerfile ships Node + pinned @anthropic-ai/claude-code (the SDK transport); new `redteam doctor [--probe]` readiness command + redteam/preflight.py; entrypoint gates the egress netpolicy + engagement-append to engagement-bearing subcommands only. M1: report SARIF write is atomic + lock-serialized (RT-21); CLI run setup fails closed (RT-26 CLI slice); cage-validation and end-to-end seal/verify/SARIF pinned as contract tests; engagements/whitebox-first.example.yaml for the first contained run.",
+        "residual": "A true autonomous live engagement needs model credentials (operator provides ANTHROPIC_API_KEY or CLAUDE_CODE_USE_BEDROCK/_VERTEX + creds) and the backend host added to egress_allowlist; everything up to that boundary is verified. RT-17 (ledger/budget lock) and the seal-swallow slice of RT-26 remain open."
       }
     ]
   },
@@ -339,13 +347,14 @@
       "title": "SARIF writer is a non-atomic read-modify-write (race + corruption + unbounded growth)",
       "severity": "medium",
       "kind": "bug",
-      "status": "confirmed",
+      "status": "FIXED (verified) — confirmed",
       "files": [
         "redteam/tools/report.py:94-115"
       ],
       "evidence": "_append_sarif_result reads, parses, appends, and rewrites the whole SARIF doc per finding. Concurrent findings (subagents) can clobber each other; a crash mid-write corrupts the file; the doc is fully re-serialized each call.",
       "repro": "Two concurrent write_finding calls; observe a lost result or truncated JSON on interrupt.",
-      "fix": "Use an append-only results journal merged at end, or write under a lock to a temp file + atomic rename; bound size."
+      "fix": "Use an append-only results journal merged at end, or write under a lock to a temp file + atomic rename; bound size.",
+      "fix_note": "FIXED (M1): _atomic_write_json serializes first (un-encodable obj raises before any file is touched), writes a temp file in the same dir, fsyncs, then os.replace — a crash mid-write can no longer corrupt the SARIF. write_finding runs record_finding + ensure + append under a per-pack asyncio.Lock (correct insurance for a future await in the critical section; RT-17's ledger/budget lock remains separately open). A corrupt base file is quarantined to .corrupt and re-inited so the finding still lands (ledger stays authoritative). Tested in tests/test_m1_report.py."
     },
     {
       "id": "RT-22",
@@ -420,7 +429,7 @@
       "evidence": "Orchestrator.__init__ mkdir, report build_pack mkdir/write_text, and CLI run() have no try/except, so setup errors surface as raw tracebacks. Hooks may raise (scope.check, float(cost_usd), record_cost ValueError on negative) instead of returning a deny \u2014 if the SDK treats a raising hook as non-blocking, that is fail-open. seal() silently swallows RuntimeError (no HMAC key), hiding a misconfigured production seal.",
       "repro": "Feed cost_usd='abc' to _post_tool_use -> ValueError escapes the hook.",
       "fix": "Wrap hook bodies to always return a safe decision (default deny on internal error); log+exit cleanly on setup failure; log when seal is skipped for a missing key.",
-      "fix_note": "PARTIALLY addressed: the PreToolUse hook now fails closed (deny) on internal error."
+      "fix_note": "PARTIALLY addressed: (1) the PreToolUse hook fails closed (deny) on internal error (earlier batch); (2) M1 wraps the CLI `run` path — Engagement.from_yaml -> 'INVALID' exit 1, Orchestrator/build_options -> 'SETUP ERROR' exit 5 — so setup errors no longer surface as raw tracebacks (tests/test_m1_cli_failclosed.py). STILL OPEN: seal() silently swallows RuntimeError on a missing HMAC key (should log when the prod seal is skipped)."
     },
     {
       "id": "RT-27",

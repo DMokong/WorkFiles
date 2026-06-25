@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import click
 
+from . import preflight
 from .auth import DEFAULT_ALLOWED_SIGNERS, verify_engagement_file
 from .engagement import Engagement
 from .orchestrator import Orchestrator, load_hmac_key
@@ -18,6 +22,108 @@ from .orchestrator import Orchestrator, load_hmac_key
 @click.version_option()
 def main() -> None:
     """redteam - modular security testing harness."""
+
+
+@main.command("doctor")
+@click.option(
+    "--probe/--no-probe",
+    default=False,
+    help="Spawn the SDK transport once to confirm the agent loop can launch "
+    "(passes without model credentials; only a missing CLI fails).",
+)
+@click.option(
+    "--require-backend",
+    is_flag=True,
+    help="Treat a missing/unready model backend as a failure (exit non-zero).",
+)
+@click.option(
+    "--audit-dir",
+    type=click.Path(path_type=Path),
+    default=Path("/audit"),
+    help="Audit dir whose writability is checked.",
+)
+def doctor(probe: bool, require_backend: bool, audit_dir: Path) -> None:
+    """Check the container is ready to run an engagement (no token spend)."""
+    checks: list[tuple[bool, bool, str, str]] = []  # (ok, required, label, detail)
+
+    # 1. The claude CLI the Agent SDK spawns as its transport.
+    cli_path = preflight.find_cli()
+    if not cli_path:
+        checks.append(
+            (False, True, "claude CLI", "not found on PATH (npm i -g @anthropic-ai/claude-code)")
+        )
+    else:
+        try:
+            ver = subprocess.run(
+                [cli_path, "-v"], capture_output=True, text=True, timeout=10
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError) as e:
+            ver = f"<error: {e}>"
+        ok = preflight.cli_version_ok(ver)
+        suffix = "" if ok else f" (need >= {'.'.join(map(str, preflight.MIN_CLI_VERSION))})"
+        checks.append((ok, True, "claude CLI", f"{ver} at {cli_path}{suffix}"))
+
+    # 2. Model backend (direct key, or Bedrock/Vertex via CLAUDE_CODE_USE_*).
+    backend = preflight.detect_backend(os.environ)
+    detail = backend.detail + (f" — missing {backend.missing}" if backend.missing else "")
+    checks.append((backend.ready, require_backend, f"model backend: {backend.backend}", detail))
+
+    # 3. Writable state dirs under the read-only rootfs (RT-23).
+    state_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
+    checks.append((preflight.dir_writable(state_dir), True, "SDK state dir", str(state_dir)))
+    checks.append((preflight.dir_writable(audit_dir), True, "audit dir", str(audit_dir)))
+
+    # 4. Seal key (informational — file HMAC or KMS; absence is dev-only).
+    has_seal = bool(load_hmac_key()) or bool(os.environ.get("REDTEAM_KMS_KEY_ID"))
+    checks.append((has_seal, False, "ledger seal key", "present" if has_seal else "absent (dev only)"))
+
+    # 5. Optional live transport probe — proves the SDK can spawn the CLI.
+    if probe:
+        outcome, pdetail = asyncio.run(_probe_transport())
+        # "ok"/"transport_reached" => the CLI spawned (M0 proven). "cli_missing"
+        # and "sdk_missing" are distinct hard failures with different fixes.
+        checks.append((outcome in ("ok", "transport_reached"), True, f"transport probe: {outcome}", pdetail))
+
+    failures = 0
+    for ok, required, label, detail in checks:
+        mark = "OK  " if ok else ("FAIL" if required else "WARN")
+        if not ok and required:
+            failures += 1
+        click.echo(f"[{mark}] {label}: {detail}")
+
+    if failures:
+        click.echo(f"\ndoctor: {failures} required check(s) failed", err=True)
+        sys.exit(1)
+    click.echo("\ndoctor: ready")
+
+
+async def _probe_transport(timeout_s: float = 25.0) -> tuple[str, str]:
+    """Spawn the SDK transport once and classify the outcome (no creds needed).
+
+    Connect-only: connecting launches the `claude` CLI subprocess, which is the
+    thing M0 must prove. We deliberately send NO query — that would need a model
+    backend and (mis)report an auth-error message as a 'response'. A missing
+    binary raises CLINotFoundError; anything else means the CLI spawned. The
+    subprocess is always torn down (shielded) even if connect times out, so the
+    probe can be run repeatedly without orphaning a `claude` process.
+    """
+    try:
+        import anyio
+        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+    except ImportError as e:
+        # The Python package is missing — distinct from a missing CLI binary,
+        # with a different fix (`pip install claude-agent-sdk`).
+        return "sdk_missing", f"claude_agent_sdk not importable: {e}"
+    client = ClaudeSDKClient(options=ClaudeAgentOptions(max_turns=1))
+    try:
+        with anyio.fail_after(timeout_s):
+            await client.connect()
+        return "ok", "SDK spawned the claude CLI transport (no model call made)"
+    except BaseException as e:  # noqa: BLE001 - classify any failure
+        return preflight.classify_probe_error(e), f"{type(e).__name__}: {e}"
+    finally:
+        with anyio.CancelScope(shield=True), contextlib.suppress(Exception):
+            await client.disconnect()
 
 
 @main.command("validate")
@@ -65,7 +171,11 @@ def run(
     skip_signature: bool,
 ) -> None:
     """Execute an engagement."""
-    eng = Engagement.from_yaml(engagement_file)
+    try:
+        eng = Engagement.from_yaml(engagement_file)
+    except Exception as e:  # noqa: BLE001 - a bad/unsigned YAML must fail cleanly
+        click.echo(f"INVALID: {e}", err=True)
+        sys.exit(1)
 
     # Verify the detached operator signature before anything reaches the
     # orchestrator. --dry-run only sanity-checks wiring, so it does not require
@@ -101,14 +211,18 @@ def run(
             )
             sys.exit(4)
 
-    orch = Orchestrator(
-        engagement=eng,
-        engagement_path=engagement_file.resolve(),
-        audit_dir=audit_dir,
-        hmac_key=load_hmac_key(),
-        assets_root=(assets_root.resolve() if assets_root else Path.cwd()),
-    )
-    options = orch.build_options()
+    try:
+        orch = Orchestrator(
+            engagement=eng,
+            engagement_path=engagement_file.resolve(),
+            audit_dir=audit_dir,
+            hmac_key=load_hmac_key(),
+            assets_root=(assets_root.resolve() if assets_root else Path.cwd()),
+        )
+        options = orch.build_options()
+    except Exception as e:  # noqa: BLE001 - setup must exit cleanly, not traceback
+        click.echo(f"SETUP ERROR: {e}", err=True)
+        sys.exit(5)
     if dry_run:
         # Strictly read-only: no audit dir, no ledger, no SARIF written.
         click.echo("Engagement: " + eng.id)

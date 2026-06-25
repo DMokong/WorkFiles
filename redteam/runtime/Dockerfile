@@ -24,6 +24,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         whois \
     && rm -rf /var/lib/apt/lists/*
 
+# The Claude Agent SDK spawns the `claude` Code CLI as its transport (the SDK
+# finds it via PATH / shutil.which). The CLI is a Node package, so install Node
+# (NodeSource, GPG-verified apt) and pin the CLI well above the SDK's 2.0.0
+# minimum. `claude -v` fails the build if the install is broken. Runtime auth is
+# env-configured (direct key, or CLAUDE_CODE_USE_BEDROCK / CLAUDE_CODE_USE_VERTEX).
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g @anthropic-ai/claude-code@2.1.191 \
+    && npm cache clean --force \
+    && claude -v
+
+# Pin the CLI's egress to what the engagement authorizes: no telemetry, no
+# auto-update, no error reporting / non-essential traffic. This matters most for
+# `doctor --probe`, which spawns the CLI with the egress netpolicy NOT applied
+# (diagnostics skip it), but it is the right default for the agent run too.
+ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+    DISABLE_TELEMETRY=1 \
+    DISABLE_AUTOUPDATER=1 \
+    DISABLE_ERROR_REPORTING=1
+
 # AWS CLI v2 (boto3 covers most reads; awscli is for ad-hoc agent use).
 RUN curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscli.zip \
     && unzip -q /tmp/awscli.zip -d /tmp \

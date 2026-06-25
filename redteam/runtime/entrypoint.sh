@@ -33,6 +33,15 @@ resolve_engagement() {  # echoes the engagement path the CLI will actually use
     printf '%s' "$eff"
 }
 
+# The egress netpolicy boxes the *agent run*. Pure diagnostics (`doctor`, help)
+# take no engagement and make no scoped egress, so they skip it and stay usable
+# even with no engagement mounted. Everything else (run, validate) is treated as
+# engagement-bearing and rendered from the same engagement it will use.
+SUBCOMMAND="${1:-}"
+case "$SUBCOMMAND" in
+    doctor | help | --help | -h | "") ENGAGEMENT_BEARING=0 ;;
+    *) ENGAGEMENT_BEARING=1 ;;
+esac
 EFFECTIVE_ENGAGEMENT="$(resolve_engagement "$@")"
 
 if [[ "$(id -u)" == "0" ]]; then
@@ -58,7 +67,9 @@ if [[ "$(id -u)" == "0" ]]; then
     # into an nft ruleset and load it (default-deny; IMDS dropped first). Needs
     # NET_ADMIN, which we hold as root here. Fail closed unless explicitly made
     # optional for a dev box whose kernel lacks nf_tables.
-    if [[ -f "$EFFECTIVE_ENGAGEMENT" && -f "$NETPOLICY_FILE" ]]; then
+    if [[ "$ENGAGEMENT_BEARING" == "0" ]]; then
+        echo "entrypoint: '$SUBCOMMAND' is a diagnostic; skipping egress netpolicy" >&2
+    elif [[ -f "$EFFECTIVE_ENGAGEMENT" && -f "$NETPOLICY_FILE" ]]; then
         if command -v nft >/dev/null 2>&1 \
             && python -m redteam.runtime.render_netpolicy "$NETPOLICY_FILE" "$EFFECTIVE_ENGAGEMENT" | nft -f -; then
             echo "entrypoint: egress netpolicy applied from $EFFECTIVE_ENGAGEMENT:" >&2
@@ -79,16 +90,19 @@ if [[ "$(id -u)" == "0" ]]; then
 fi
 
 # --- unprivileged from here on -------------------------------------------------
-if [[ ! -f "$EFFECTIVE_ENGAGEMENT" ]]; then
-    echo "entrypoint: engagement file not found at $EFFECTIVE_ENGAGEMENT" >&2
-    exit 64
+# Only `run` takes the engagement as a positional from $ENGAGEMENT_FILE; pass it
+# through (appending the env path only when no explicit path was given, so
+# `CMD ["run"]` becomes `run $ENGAGEMENT_FILE`). Other subcommands (doctor,
+# validate <path>, help) pass straight through and let the CLI parse them.
+if [[ "$SUBCOMMAND" == "run" ]]; then
+    if [[ ! -f "$EFFECTIVE_ENGAGEMENT" ]]; then
+        echo "entrypoint: engagement file not found at $EFFECTIVE_ENGAGEMENT" >&2
+        exit 64
+    fi
+    if caller_passed_engagement "$@"; then
+        exec redteam "$@"
+    else
+        exec redteam "$@" "$ENGAGEMENT_FILE"
+    fi
 fi
-
-# Run against the SAME engagement the netpolicy was rendered from: pass the
-# caller's args through, appending $ENGAGEMENT_FILE only when no explicit
-# engagement path was given (so `CMD ["run"]` becomes `run $ENGAGEMENT_FILE`).
-if caller_passed_engagement "$@"; then
-    exec redteam "$@"
-else
-    exec redteam "$@" "$ENGAGEMENT_FILE"
-fi
+exec redteam "$@"
