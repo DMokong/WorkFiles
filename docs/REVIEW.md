@@ -77,6 +77,25 @@
 > verified; `engagements/whitebox-first.example.yaml` is the contained first-run
 > template. RT-17 and the seal-swallow slice of RT-26 stay open.
 
+> **Update 2026-06-26 (later) — FIRST REAL AUTONOMOUS ENGAGEMENT RAN
+> SUCCESSFULLY** (host headless `claude` 2.1.191). Against a planted-vulnerable
+> backend, the agent autonomously ran the loop, the scope-guard cage **denied
+> `ToolSearch`/`Read` and allowed the whitelisted `whitebox`/`report` tools
+> live**, and it recorded **6 correct findings** (SQLi, broken access control,
+> unauthenticated PII export, hardcoded Stripe + DB secrets, Flask debug RCE) via
+> `report__write_finding` → 6 SARIF results + 6 `finding.recorded` entries; the
+> 42-entry hash-chained ledger sealed and `redteam-verify` passed. The *first*
+> attempt also did exactly what a live smoke is for: it exposed a **critical
+> runtime-only bug all 138 unit tests missed** — the SDK invokes a tool handler
+> with a single `args` dict and expects `{"content": [...]}` back, but our
+> handlers took unpacked params and returned raw dicts, so *every tool crashed*.
+> Fixed with a dual-convention adapter in `redteam/tools/_sdk_shim.py` (pinned by
+> `tests/test_m1_tool_sdk_contract.py`) and re-verified by a clean re-run. Open
+> follow-ups the live run surfaced: finding capture is prompt-driven, not
+> structurally enforced (motivates an M3 verify/report pipeline), and RT-20's
+> PostToolUse/budget accounting is imprecise (11 post-records for 19 allowed
+> calls).
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9
