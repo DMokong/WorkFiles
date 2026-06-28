@@ -138,6 +138,17 @@ def validate(engagement_file: Path) -> None:
     click.echo(f"OK: {eng.id} ({len(eng.tools)} tool packs, {len(eng.external_mcp)} external MCPs)")
 
 
+def _report_destination(audit_dir: Path, destination: Path | str) -> Path:
+    """Place the SARIF report under ``audit_dir`` using the engagement's filename.
+
+    The ledger and the report are both audit outputs, so they co-locate in
+    ``--audit-dir``. Only the basename of ``reporting.destination`` is used, which
+    also strips any directory / ``../`` traversal an engagement might carry.
+    """
+    name = Path(destination).name or "findings.sarif"
+    return Path(audit_dir) / name
+
+
 @main.command("run")
 @click.argument("engagement_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option(
@@ -210,6 +221,10 @@ def run(
                 err=True,
             )
             sys.exit(4)
+
+    # Co-locate the SARIF report with the audit ledger under --audit-dir (the
+    # report pack and RunResult both read engagement.reporting.destination).
+    eng.reporting.destination = _report_destination(audit_dir, eng.reporting.destination)
 
     try:
         orch = Orchestrator(
