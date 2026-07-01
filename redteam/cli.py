@@ -248,6 +248,110 @@ def run(
     asyncio.run(_run_with_sdk(orch, options, signature))
 
 
+@main.command("triage")
+@click.argument("ledger", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--assets-root",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Root the findings' file locations resolve against, for the "
+    "prefilter's file-existence + containment check (read-only).",
+)
+@click.option(
+    "--out",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Directory for the triaged SARIF / markdown / triage.json "
+    "(default: the ledger's parent directory).",
+)
+@click.option(
+    "--verify",
+    is_flag=True,
+    help="Adversarially verify each finding with the model backend (opt-in; "
+    "requires a configured backend).",
+)
+@click.option(
+    "--chain",
+    is_flag=True,
+    help="Compose kept findings into exploit chains with the model backend "
+    "(opt-in; requires a configured backend).",
+)
+@click.option(
+    "--min-confidence",
+    type=click.IntRange(0, 10),
+    default=7,
+    show_default=True,
+    help="Confidence gate (0-10) for keeping a TRUE_POSITIVE under --verify.",
+)
+@click.option("--model", default=None, help="Model id for the verify/chain stages.")
+def triage(
+    ledger: Path,
+    assets_root: Path | None,
+    out: Path | None,
+    verify: bool,
+    chain: bool,
+    min_confidence: int,
+    model: str | None,
+) -> None:
+    """Refine a sealed engagement ledger's findings into a triaged report.
+
+    Read-only over the ledger. The deterministic stages (prefilter, dedup,
+    enrich, emit) always run and need no model or credentials; --verify and
+    --chain are opt-in and require a model backend.
+    """
+    from .pipeline import emit as pipeline_emit
+    from .pipeline import stages
+    from .pipeline.load import findings_from_ledger
+
+    # Gate the model stages on a configured backend, mirroring the `run` path:
+    # refuse cleanly (no traceback, no artifacts written) rather than spawning a
+    # transport that would only fail on auth.
+    if verify or chain:
+        backend = preflight.detect_backend(os.environ)
+        if not backend.ready:
+            click.echo(
+                "REFUSED: --verify/--chain need a model backend, but none is "
+                f"configured ({backend.detail}). Set ANTHROPIC_API_KEY or a "
+                "CLAUDE_CODE_USE_BEDROCK/VERTEX backend, or drop the flags to run "
+                "the deterministic stages only.",
+                err=True,
+            )
+            sys.exit(2)
+
+    try:
+        engagement_id, findings = findings_from_ledger(ledger)
+        out_dir = out if out is not None else ledger.parent
+        report = stages.run_triage(
+            findings,
+            engagement_id=engagement_id,
+            assets_root=assets_root.resolve() if assets_root else None,
+            verify=verify,
+            chain=chain,
+            min_confidence=min_confidence,
+            model=model,
+        )
+        stem = ledger.stem
+        paths = pipeline_emit.emit_report(report, out_dir, stem)
+    except Exception as e:  # noqa: BLE001 - triage must exit cleanly, not traceback
+        click.echo(f"TRIAGE ERROR: {e}", err=True)
+        sys.exit(1)
+
+    m = report.metrics
+    summary = (
+        f"Triage {report.engagement_id or '(unknown)'}: "
+        f"kept={m['kept']} dropped={m['dropped']} chains={len(report.chains)} "
+        f"(from {m['input']} findings)"
+    )
+    if m.get("verified") and m.get("precision") is not None:
+        summary += f" precision={m['precision']:.0%}"
+    click.echo(summary)
+    if report.degraded:
+        click.echo(f"  degraded: {report.degraded_reason}")
+    click.echo(f"  sarif:    {paths['sarif']}")
+    click.echo(f"  report:   {paths['markdown']}")
+    click.echo(f"  json:     {paths['triage_json']}")
+
+
 async def _run_with_sdk(orch: Orchestrator, options: dict, signature: dict | None = None) -> None:
     try:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient

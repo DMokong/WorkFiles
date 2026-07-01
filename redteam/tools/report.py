@@ -22,6 +22,16 @@ PACK_NAME = "report"
 
 _SEVERITIES = ("info", "low", "medium", "high", "critical")
 
+# SARIF result level per finding severity. Exported so the triage pipeline
+# (redteam/pipeline/emit.py) emits the same mapping — one source of truth.
+SARIF_LEVEL = {
+    "info": "note",
+    "low": "note",
+    "medium": "warning",
+    "high": "error",
+    "critical": "error",
+}
+
 
 def build_pack(ctx: ToolContext):
     # No filesystem side effects at build time (keeps --dry-run clean). The
@@ -105,15 +115,11 @@ def _empty_sarif() -> str:
     )
 
 
-def _atomic_write_json(path: Path, obj: Any) -> None:
-    """Write JSON to ``path`` atomically: serialize, write a temp file in the
-    same directory, fsync, then ``os.replace``.
-
-    Serializing first means an un-encodable object raises before any file is
-    touched (the existing file and disk stay clean). The temp+rename means a
-    crash mid-write can never leave a half-written/corrupt SARIF doc.
-    """
-    data = json.dumps(obj, indent=2)
+def _atomic_write_text(path: Path, data: str) -> None:
+    """Write ``data`` to ``path`` atomically: write a temp file in the same
+    directory, fsync, then ``os.replace``. A crash mid-write can never leave a
+    half-written file — the reader sees either the old file or the complete new
+    one."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
     try:
@@ -128,6 +134,16 @@ def _atomic_write_json(path: Path, obj: Any) -> None:
         raise
 
 
+def _atomic_write_json(path: Path, obj: Any) -> None:
+    """Write JSON to ``path`` atomically.
+
+    Serializing first means an un-encodable object raises before any file is
+    touched (the existing file and disk stay clean); the temp+rename then means a
+    crash mid-write can never leave a half-written/corrupt SARIF doc.
+    """
+    _atomic_write_text(path, json.dumps(obj, indent=2))
+
+
 def _append_sarif_result(path: Path, finding: dict[str, Any]) -> None:
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
@@ -138,9 +154,7 @@ def _append_sarif_result(path: Path, finding: dict[str, Any]) -> None:
         with contextlib.suppress(OSError):
             path.replace(path.with_name(path.name + ".corrupt"))
         doc = json.loads(_empty_sarif())
-    level = {"info": "note", "low": "note", "medium": "warning", "high": "error", "critical": "error"}[
-        finding["severity"]
-    ]
+    level = SARIF_LEVEL[finding["severity"]]
     result = {
         "ruleId": finding["title"],
         "level": level,

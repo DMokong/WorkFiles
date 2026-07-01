@@ -96,6 +96,30 @@
 > PostToolUse/budget accounting is imprecise (11 post-records for 19 allowed
 > calls).
 
+> **Update 2026-07-02 — M3: the `redteam triage` findings-quality pipeline (the
+> workflow-shaped trust backend).** The live run proved finding *capture* works
+> but nothing guaranteed finding *quality*. M3 adds a separate, re-runnable
+> `redteam triage <ledger>` command that reads the sealed ledger **read-only**
+> (hash-verified unchanged before/after) and emits a refined, deduplicated,
+> CWE/CVSS-enriched report — SARIF 2.1.0 + markdown + `triage.json`. The
+> deterministic stages (**prefilter → dedup → enrich → emit**) need no model or
+> credentials and are *total* (a malformed finding is dropped-and-recorded,
+> never raised); adversarial LLM **verify** (confidence-gated; an unparseable or
+> conflicting verdict becomes UNVERIFIED and is **kept**, never laundered to
+> FALSE_POSITIVE) and exploit-**chain** synthesis are opt-in flags gated on a
+> configured backend (`preflight.detect_backend`), driven over the SDK's one-shot
+> `query()`. Built strictly TDD (**266 passed, ruff clean**). A five-reviewer
+> adversarial workflow + a focused re-verifier caught and fixed **14 defects** —
+> the sharpest being an `extract_json` **O(N²) hang** and an uncaught
+> `RecursionError` on adversarial model output (both violated *never hang/crash*;
+> fixed with a bounded `raw_decode`-based extractor), a **schema-invalid SARIF**
+> `startLine:0`, **verdict laundering** via a conflicting bottom-up verdict line,
+> and **enrich trusting a ledger-injected CVSS vector** (fixed by whitelisting
+> only the agent's report fields at load). Every model-output path degrades; the
+> pipeline never crashes on a malformed finding or garbage model reply. v-next
+> (documented non-goals): semantic dedup, CMDB/environmental CVSS +
+> offensive-priority, Jira upsert of triaged findings, multi-backend routing.
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9
