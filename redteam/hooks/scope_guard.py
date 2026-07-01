@@ -158,6 +158,12 @@ def _candidate_host(candidate: str) -> str | None:
 _TARGETLESS_TOOLS = frozenset(
     {
         "report__write_finding",
+        # recon GitHub tools reach github.com via the authenticated `gh` CLI,
+        # not an engagement scope target; they are read-only + org-scoped
+        # per call (see redteam/tools/recon.py).
+        "recon__gh_search_code",
+        "recon__gh_search_repos",
+        "recon__gh_repo_view",
         "whitebox__list_assets",
         "whitebox__repo_grep",
         "whitebox__repo_read",

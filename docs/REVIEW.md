@@ -143,6 +143,26 @@
 > here (no AWS creds on the host); the boto3-mocked tests cover
 > sign/verify/write_seal/round-trip.
 
+> **Update 2026-07-02 (later still) — build-next #4: recon `gh_*` tools.**
+> Three **read-only, org-scoped** GitHub recon tools (`gh_search_code`,
+> `gh_search_repos`, `gh_repo_view`) that shell out to the `gh` CLI baked into
+> the runtime image (list argv, **no shell**), added to the scope guard's
+> targetless allowlist (GitHub egress is via the authenticated `gh`, not an
+> engagement scope target). Built TDD; a two-agent adversarial pass
+> (security/injection+containment, regression) found no command/flag injection
+> but surfaced **three real gaps between the guarantees the docstring claimed
+> and what the code enforced**, all fixed in-batch: (1) "org-scoped, never
+> global" wasn't *enforced* — `owner` was unbound to the engagement and a
+> `query` could smuggle `org:`/`user:`/`repo:` GitHub qualifiers to escape
+> `--owner`; now a new optional `scope.github_orgs` allowlist binds the owner
+> when set, and scope-broadening query qualifiers are refused; (2) `int(limit)`
+> sat outside the try/except, so a non-int `limit` raised — contradicting the
+> "total, never raise" contract; now `_clamp_limit` returns a structured error;
+> (3) the login/repo regexes used `$` (accepts a trailing newline) → switched
+> to `\Z`. Full suite **302 passed, ruff clean**. The mounted PAT's scope
+> stays the ultimate boundary — the docstring now says so honestly instead of
+> overclaiming. `whois` / `cert_transparency` remain documented stubs.
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9

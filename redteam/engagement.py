@@ -7,6 +7,7 @@ read from a parsed Engagement at runtime; nothing else parses the YAML.
 from __future__ import annotations
 
 import ipaddress
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -54,6 +55,9 @@ class Window(BaseModel):
         return self.start <= ts <= self.end
 
 
+_GITHUB_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}\Z")
+
+
 class Scope(BaseModel):
     targets: list[str] = Field(min_length=1)
     out_of_scope: list[str] = Field(default_factory=list)
@@ -61,6 +65,19 @@ class Scope(BaseModel):
     # Read-only by default: the web pack refuses state-changing HTTP verbs
     # (POST/PUT/PATCH/DELETE) unless the operator explicitly opts in here.
     allow_write_methods: bool = False
+    # Optional allowlist of GitHub orgs/users the recon gh_* tools may query.
+    # Empty (default) = any owner permitted (bounded only by the mounted PAT's
+    # scope); non-empty = gh recon is refused for any owner not listed. This is
+    # the engagement-level binding that makes recon's "org-scoped" real.
+    github_orgs: list[str] = Field(default_factory=list)
+
+    @field_validator("github_orgs")
+    @classmethod
+    def _validate_github_orgs(cls, values: list[str]) -> list[str]:
+        for v in values:
+            if not _GITHUB_LOGIN_RE.match(v):
+                raise ValueError(f"github_orgs entry {v!r} is not a valid GitHub login")
+        return values
 
     @field_validator("targets", "out_of_scope")
     @classmethod

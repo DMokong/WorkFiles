@@ -29,6 +29,11 @@ scope:
     - kms.us-east-1.amazonaws.com
     - crt.sh
     - staging.example.com
+  # Optional: bind the recon gh_* tools to specific GitHub orgs/users. When
+  # set, gh_search_code / gh_search_repos / gh_repo_view refuse any other
+  # owner. Omit (empty) to allow any owner the mounted PAT can read.
+  github_orgs:
+    - example-org
 
 # Optional whitebox attack surface. Operator pre-clones repos via:
 #   gh repo clone myorg/example-api ./targets/example-api

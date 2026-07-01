@@ -108,8 +108,13 @@ docs/PLAN.md            full design doc
   and the M3 batch in `docs/review-findings.json`.
 
 **Stubbed / blueprint-only (clearly marked):**
-- `redteam/tools/{recon,web,cloud,network,whitebox,report}.py` — all
-  are MCP-shaped but most tool bodies return `not_implemented`
+- `redteam/tools/{web,cloud,network,whitebox,report}.py` — MCP-shaped but
+  most tool bodies return `not_implemented` (report + whitebox grep/read are
+  real; the rest are stubs). `redteam/tools/recon.py`'s `gh_*` tools are now
+  **real** (build-next #4): read-only, org-scoped `gh` CLI wrappers
+  (`gh_search_code` / `gh_search_repos` / `gh_repo_view`), argv-not-shell,
+  input-validated, total; `whois` / `cert_transparency` remain stubs.
+  Tested in `tests/test_recon_gh.py`
 - `redteam/runtime/docker-compose.yml` — references `.secrets/` files
   (`anthropic_api_key`, `gh_token`) that do not exist; create them before
   bringing the stack up. `atlassian_token` is opt-in via the
@@ -197,8 +202,16 @@ Since the last revision, **M3 (the `redteam triage` findings pipeline) landed**
    **Done (RT-23):** `redteam/runtime/render_netpolicy.py` renders a
    default-deny nft ruleset (IMDS denied first, overlapping entries
    collapsed); the entrypoint loads it and fails closed.
-4. **Implement the recon `gh_*` tools** as wrappers around the `gh` CLI
-   so the agent can search the org's GitHub for context without an MCP.
+4. ~~Implement the recon `gh_*` tools as wrappers around the `gh` CLI.~~
+   **Done:** `recon__gh_search_code` / `gh_search_repos` / `gh_repo_view`
+   shell out to `gh` (list argv, no shell), are read-only and org-scoped
+   (every search carries `--owner`; `scope.github_orgs`, if set, *enforces*
+   the owner; scope-broadening `org:`/`user:`/`repo:` query qualifiers are
+   refused), and are total (missing binary / non-zero exit / timeout /
+   non-JSON / bad limit → structured error, never a raise). Listed targetless
+   in `scope_guard.py`. Optional new engagement field `scope.github_orgs`.
+   Tested in `tests/test_recon_gh.py` (22 cases) + hardened by a two-agent
+   adversarial pass (injection/containment + regression).
 5. **Implement Atlassian MCP wiring + idempotent Jira upsert** with a
    deterministic external key (e.g. `redteam-{engagement_id}-{finding_hash[:12]}`)
    so re-runs update tickets in place — for both `report.py` (live findings) and
