@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .. import jira
 from ._context import ToolContext
 from ._sdk_shim import create_sdk_mcp_server, tool
 
@@ -86,10 +87,63 @@ def build_pack(ctx: ToolContext):
             _append_sarif_result(sarif_path, finding)
         return {"recorded": True, "title": title, "severity": severity}
 
+    tools = [write_finding]
+
+    # The Jira upsert tool is only exposed when the engagement enables the
+    # Atlassian MCP AND sets a project key — otherwise there is nowhere to file.
+    atlassian_on = any(m.name == "atlassian" for m in ctx.engagement.external_mcp)
+    jira_project = ctx.engagement.reporting.jira_project
+    if atlassian_on and jira_project:
+
+        @tool(
+            "report__jira_upsert",
+            "Build an IDEMPOTENT Jira upsert plan for a finding: returns a stable "
+            "external_key, the JQL to find an existing ticket, and the issue fields. "
+            "Search Jira with `jql` first (atlassian search tool); if it returns an "
+            "issue, edit that issue with `fields`, else create a new issue with `fields`. "
+            "Pass the search result back as `existing_issues` to have create-vs-update "
+            "decided for you.",
+            {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "severity": {"type": "string", "enum": list(_SEVERITIES)},
+                    "description": {"type": "string"},
+                    "location": {"type": "string"},
+                    "existing_issues": {
+                        "type": "array",
+                        "description": "prior atlassian search result (issues); optional",
+                    },
+                },
+                "required": ["title", "severity", "description"],
+            },
+        )
+        async def jira_upsert(
+            title: str,
+            severity: str,
+            description: str,
+            location: str | None = None,
+            existing_issues: list[Any] | None = None,
+        ) -> dict[str, Any]:
+            sev = severity.lower() if isinstance(severity, str) else "info"
+            if sev not in _SEVERITIES:
+                sev = "info"
+            return jira.plan_upsert(
+                ctx.engagement.id,
+                title,
+                sev,
+                description,
+                location,
+                jira_project,
+                existing_issues=existing_issues or [],
+            )
+
+        tools.append(jira_upsert)
+
     return create_sdk_mcp_server(
         name="report",
         version="0.1.0",
-        tools=[write_finding],
+        tools=tools,
     )
 
 

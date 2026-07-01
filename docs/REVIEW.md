@@ -185,6 +185,29 @@
 > --config auto` needs `semgrep.dev` in the egress allowlist (added to the
 > example).
 
+> **Update 2026-07-02 (later⁴) — build-next #5: idempotent Atlassian/Jira
+> upsert.** The Atlassian MCP is *agent-driven*, so the harness owns only the
+> deterministic scaffolding: new `redteam/jira.py` computes a stable
+> `external_key` (`redteam-<engagement>-<12hex>` over normalised
+> title+location, so a re-run updates the same ticket), the JQL to find it, the
+> issue `fields`, and the create-vs-update decision. Wired into `report.py` as
+> the **gated** `report__jira_upsert` tool (only when the atlassian MCP is
+> enabled AND `reporting.jira_project` is set) and into the M3 triage output as
+> a `<stem>.jira.json` bundle (`redteam triage --jira-project SEC`). Both the
+> live tool and triage derive the SAME key, so they converge on one ticket per
+> finding. Built TDD; a two-agent adversarial pass (security + regression)
+> **confirmed a real JQL-injection** confined to the triage path — the
+> `--jira-project` CLI flag bypassed the schema validator, and a **tampered
+> ledger's `engagement_id`** flowed unvalidated into the JQL and Jira labels
+> (the repo's own "tampered ledger must not inject trust" threat model). Fixed
+> defence-in-depth: the engagement id is **sanitised** inside `external_key`
+> (always a space/quote-free label; identity for schema-valid ids),
+> `jql_for_key` **escapes** `\` and `"` in both operands, and `--jira-project`
+> is validated with the same grammar as the schema field (exit 2 on a bad key).
+> Full suite **344 passed, ruff clean**. (Noted, out of scope: `triage` still
+> doesn't verify the ledger seal before triaging — the injection is neutralised
+> regardless.) Third-party MCP allowlist stays `{atlassian}`.
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9

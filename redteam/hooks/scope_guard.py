@@ -158,6 +158,9 @@ def _candidate_host(candidate: str) -> str | None:
 _TARGETLESS_TOOLS = frozenset(
     {
         "report__write_finding",
+        # Idempotent Jira upsert planner — pure/deterministic, no target host
+        # (the Atlassian MCP call the agent makes is gated separately).
+        "report__jira_upsert",
         # recon GitHub tools reach github.com via the authenticated `gh` CLI,
         # not an engagement scope target; they are read-only + org-scoped
         # per call (see redteam/tools/recon.py).

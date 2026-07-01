@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .. import jira
 from ..tools.report import SARIF_LEVEL, _atomic_write_json, _atomic_write_text
 from .models import Finding, TriageReport
 
@@ -16,8 +17,16 @@ _SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
 _CWE_TAXONOMY_URI = "https://cwe.mitre.org/data/published/cwe_latest.xml"
 
 
-def emit_report(report: TriageReport, out_dir: Path, stem: str) -> dict[str, Path]:
-    """Write the three triage artifacts under ``out_dir`` and return their paths."""
+def emit_report(
+    report: TriageReport, out_dir: Path, stem: str, jira_project: str | None = None
+) -> dict[str, Path]:
+    """Write the triage artifacts under ``out_dir`` and return their paths.
+
+    Always emits SARIF + markdown + triage.json. When ``jira_project`` is given,
+    also emits ``<stem>.jira.json`` — a per-kept-finding idempotent Jira upsert
+    bundle whose external keys match report.py's live tool, so re-running triage
+    over a re-run engagement updates the same tickets in place.
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     sarif_path = out_dir / f"{stem}.triaged.sarif"
@@ -28,7 +37,36 @@ def emit_report(report: TriageReport, out_dir: Path, stem: str) -> dict[str, Pat
     _atomic_write_json(json_path, report.model_dump(mode="json"))
     _atomic_write_text(md_path, _build_markdown(report))
 
-    return {"sarif": sarif_path, "markdown": md_path, "triage_json": json_path}
+    paths = {"sarif": sarif_path, "markdown": md_path, "triage_json": json_path}
+    if jira_project:
+        jira_path = out_dir / f"{stem}.jira.json"
+        _atomic_write_json(jira_path, _build_jira_bundle(report, jira_project))
+        paths["jira"] = jira_path
+    return paths
+
+
+def _build_jira_bundle(report: TriageReport, project_key: str) -> dict:
+    """Per-kept-finding idempotent upsert plan (no network; applied by the agent
+    or an operator against the Atlassian MCP)."""
+    issues = [
+        {
+            "external_key": jira.external_key(report.engagement_id, f.title, f.location),
+            "jql": jira.jql_for_key(
+                jira.external_key(report.engagement_id, f.title, f.location), project_key
+            ),
+            "fields": jira.build_issue_fields(
+                report.engagement_id, f.title, f.severity, f.description, f.location, project_key
+            ),
+        }
+        for f in report.findings
+    ]
+    return {
+        "project": project_key,
+        "engagement_id": report.engagement_id,
+        "apply": "For each issue: search Jira with `jql`; if it returns a match, edit "
+        "that issue with `fields`, else create a new issue with `fields`.",
+        "issues": issues,
+    }
 
 
 # --- SARIF -------------------------------------------------------------------

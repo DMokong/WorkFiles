@@ -77,6 +77,11 @@ docs/PLAN.md            full design doc
   `tests/container/smoke_rt23.sh` (RT-23)
 - `redteam/tools/report.py` — atomic SARIF writer (temp + `os.replace`,
   serialize-first) under an asyncio.Lock; corrupt base quarantined (RT-21)
+- `redteam/jira.py` — deterministic Atlassian/Jira idempotency logic
+  (build-next #5): stable `external_key` (sanitised id → safe label + escaped
+  JQL), `jql_for_key`, `build_issue_fields`, `plan_upsert`. Consumed by the
+  gated `report__jira_upsert` tool and the M3 `<stem>.jira.json` bundle. Pure,
+  no network. Tested in `tests/test_jira.py`
 - `redteam/ledger/kms_seal.py` — KMS HMAC seal is **wired** (build-next #2):
   `build_sealer(env)` returns a `KmsHmacSealer` when `REDTEAM_KMS_KEY_ID` is
   set (else `None`); `LedgerWriter` takes an injected `sealer` that is
@@ -214,10 +219,21 @@ Since the last revision, **M3 (the `redteam triage` findings pipeline) landed**
    in `scope_guard.py`. Optional new engagement field `scope.github_orgs`.
    Tested in `tests/test_recon_gh.py` (22 cases) + hardened by a two-agent
    adversarial pass (injection/containment + regression).
-5. **Implement Atlassian MCP wiring + idempotent Jira upsert** with a
-   deterministic external key (e.g. `redteam-{engagement_id}-{finding_hash[:12]}`)
-   so re-runs update tickets in place — for both `report.py` (live findings) and
-   the M3 `triage` output (triaged findings; M3 deferred this).
+5. ~~Implement Atlassian MCP wiring + idempotent Jira upsert.~~ **Done:**
+   `redteam/jira.py` owns the deterministic scaffolding (the Atlassian MCP is
+   agent-driven): `external_key(engagement_id, title, location)` =
+   `redteam-<engagement>-<12hex>` (a re-run yields the same key → the ticket is
+   updated, not duplicated), `jql_for_key`, `build_issue_fields`, `plan_upsert`
+   (create-vs-update). Wired into `report.py` as the gated `report__jira_upsert`
+   tool (only when the atlassian MCP is enabled AND `reporting.jira_project` is
+   set) and into the M3 triage output as a `<stem>.jira.json` bundle
+   (`redteam triage --jira-project SEC`). New optional field
+   `reporting.jira_project`. Security: engagement_id is sanitised in the key
+   (safe Jira label) and JQL operands are escaped; `--jira-project` is validated
+   — a two-agent adversarial pass caught a JQL-injection via the CLI flag and a
+   tampered-ledger engagement_id, both fixed. `report.py` (live) and triage
+   derive the SAME key so they converge on one ticket per finding. Tested in
+   `tests/test_jira.py` / `test_report_jira.py` / `test_triage_jira.py`.
 6. ~~Real semgrep / tfsec / checkov calls in `whitebox.py`.~~ **Done:**
    `redteam/tools/_scanners.py` runs semgrep (source) / tfsec + checkov (IaC)
    via a list argv (no shell; the scanned path is always a resolved asset

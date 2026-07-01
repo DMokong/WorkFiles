@@ -288,6 +288,12 @@ def run(
     help="Confidence gate (0-10) for keeping a TRUE_POSITIVE under --verify.",
 )
 @click.option("--model", default=None, help="Model id for the verify/chain stages.")
+@click.option(
+    "--jira-project",
+    default=None,
+    help="Jira project key: also emit a <stem>.jira.json idempotent upsert "
+    "bundle for the kept findings (agent/operator applies it via the atlassian MCP).",
+)
 def triage(
     ledger: Path,
     assets_root: Path | None,
@@ -296,6 +302,7 @@ def triage(
     chain: bool,
     min_confidence: int,
     model: str | None,
+    jira_project: str | None,
 ) -> None:
     """Refine a sealed engagement ledger's findings into a triaged report.
 
@@ -303,9 +310,20 @@ def triage(
     enrich, emit) always run and need no model or credentials; --verify and
     --chain are opt-in and need a model backend or a logged-in claude CLI.
     """
+    from .engagement import _JIRA_PROJECT_RE
     from .pipeline import emit as pipeline_emit
     from .pipeline import stages
     from .pipeline.load import findings_from_ledger
+
+    # Validate --jira-project with the same grammar as reporting.jira_project so
+    # the CLI flag can't smuggle an unvalidated value into the emitted bundle.
+    if jira_project is not None and not _JIRA_PROJECT_RE.match(jira_project):
+        click.echo(
+            f"INVALID: --jira-project {jira_project!r} is not a valid Jira project key "
+            "(letter, then letters/digits/underscore; no spaces/quotes)",
+            err=True,
+        )
+        sys.exit(2)
 
     # Gate the model stages on a reachable model, mirroring the `run` path:
     # refuse cleanly (no traceback, no artifacts written) only when there is
@@ -335,7 +353,7 @@ def triage(
             model=model,
         )
         stem = ledger.stem
-        paths = pipeline_emit.emit_report(report, out_dir, stem)
+        paths = pipeline_emit.emit_report(report, out_dir, stem, jira_project=jira_project)
     except Exception as e:  # noqa: BLE001 - triage must exit cleanly, not traceback
         click.echo(f"TRIAGE ERROR: {e}", err=True)
         sys.exit(1)
@@ -354,6 +372,8 @@ def triage(
     click.echo(f"  sarif:    {paths['sarif']}")
     click.echo(f"  report:   {paths['markdown']}")
     click.echo(f"  json:     {paths['triage_json']}")
+    if "jira" in paths:
+        click.echo(f"  jira:     {paths['jira']}")
 
 
 async def _run_with_sdk(orch: Orchestrator, options: dict, signature: dict | None = None) -> None:

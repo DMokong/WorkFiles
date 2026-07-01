@@ -210,9 +210,26 @@ class ExternalMcp(BaseModel):
         return self
 
 
+_JIRA_PROJECT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,60}\Z")
+
+
 class Reporting(BaseModel):
     format: Literal["sarif", "json", "markdown"] = "sarif"
     destination: Path = Path("/audit/findings.sarif")
+    # Optional Jira project key for the (agent-driven, idempotent) Atlassian
+    # upsert. Only meaningful when an atlassian external_mcp is enabled; the
+    # report__jira_upsert tool and the triage `.jira.json` artifact use it.
+    jira_project: str | None = None
+
+    @field_validator("jira_project")
+    @classmethod
+    def _validate_jira_project(cls, v: str | None) -> str | None:
+        if v is not None and not _JIRA_PROJECT_RE.match(v):
+            raise ValueError(
+                f"jira_project {v!r} must be a Jira project key "
+                "(letter, then letters/digits/underscore; no spaces/quotes)"
+            )
+        return v
 
 
 class Engagement(BaseModel):
