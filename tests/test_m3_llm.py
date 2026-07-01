@@ -32,3 +32,12 @@ def test_ask_is_async_callable():
     import inspect
 
     assert inspect.iscoroutinefunction(llm.ask)
+
+
+def test_query_options_grant_no_tools_and_one_turn():
+    # The one-shot reasoning turn must get NO tools (source-containment + it stops
+    # the model exhausting max_turns=1 with tool_use blocks) and exactly one turn.
+    opts = llm._query_options("sys prompt", None)
+    assert opts.allowed_tools == []
+    assert opts.max_turns == 1
+    assert opts.system_prompt == "sys prompt"

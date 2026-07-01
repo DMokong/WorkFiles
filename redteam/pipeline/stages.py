@@ -152,10 +152,12 @@ def enrich(findings: list[Finding]) -> None:
 # --- verify (opt-in LLM, VVAH S6) -------------------------------------------
 
 _VERIFY_SYSTEM = (
-    "You are an adversarial security reviewer. Assume the finding below is a "
-    "FALSE POSITIVE until you have personally confirmed it from the code. Walk "
-    "the callers, look for upstream validation, sanitisation, or access "
-    "controls that would neutralise it. Only then decide.\n\n"
+    "You are an adversarial security reviewer. You have NO tools: reason ONLY "
+    "from the finding and the source excerpt included in the message — do not "
+    "attempt to read files, search, or call any tool. Assume the finding is a "
+    "FALSE POSITIVE until the shown code convinces you otherwise; look in the "
+    "excerpt for upstream validation, sanitisation, or access controls that "
+    "would neutralise it, then decide.\n\n"
     "End your reply with EXACTLY this grammar on its own final lines:\n"
     "VERDICT: TRUE_POSITIVE|FALSE_POSITIVE (confidence: N/10) — <one-line reason>\n"
     "Optionally, on the next line, a CVSS 3.1 base vector:\n"
@@ -312,10 +314,11 @@ async def verify_findings(
 _SEVERITY_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
 _CHAIN_SYSTEM = (
-    "You are a security analyst composing exploit chains. Given a numbered list "
-    "of confirmed findings, identify combinations that compose into a single "
-    "attack path (e.g. info-leak + auth-bypass + memory-corruption). Only chain "
-    "findings that genuinely enable each other.\n\n"
+    "You are a security analyst composing exploit chains. You have NO tools: "
+    "reason ONLY from the numbered findings in the message. Identify "
+    "combinations that compose into a single attack path (e.g. info-leak + "
+    "auth-bypass + memory-corruption). Only chain findings that genuinely "
+    "enable each other.\n\n"
     "Reply with ONLY a JSON array (no prose). Each element:\n"
     '{"title": str, "steps": [finding_index, ...], "severity": '
     '"info|low|medium|high|critical", "narrative": str}\n'

@@ -15,6 +15,16 @@ def _f(title, severity="high"):
 # --- parse_verdict (pure) ----------------------------------------------------
 
 
+def test_verify_and_chain_prompts_forbid_tool_use():
+    # A live-only failure: an "investigate/walk the callers" prompt makes the host
+    # CLI's built-in tools tempt the model into tool_use, exhausting max_turns=1
+    # and erroring the call. The prompts must instruct reasoning from the provided
+    # text only, and must not invite filesystem investigation.
+    for prompt in (stages._VERIFY_SYSTEM, stages._CHAIN_SYSTEM):
+        assert "NO tools" in prompt
+    assert "Walk the callers" not in stages._VERIFY_SYSTEM
+
+
 def test_parse_verdict_true_positive():
     v = stages.parse_verdict("reasoning...\nVERDICT: TRUE_POSITIVE (confidence: 9/10) — reachable")
     assert v == {"verdict": "TRUE_POSITIVE", "confidence": 9, "reason": "reachable", "cvss_vector": None}

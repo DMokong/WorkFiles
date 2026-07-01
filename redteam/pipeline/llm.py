@@ -33,6 +33,23 @@ def _collect_text(messages: Iterable[Any]) -> str:
     return "".join(parts)
 
 
+def _query_options(system: str, model: str | None):
+    """Build the one-shot ``query()`` options.
+
+    ``allowed_tools=[]`` grants the reasoning turn NO tools. This is load-bearing
+    two ways: (1) it keeps the model inside the pipeline's source-containment — a
+    verify turn reasons only from the excerpt ``_source_window`` feeds it and
+    cannot read files outside the asset scope via the host CLI's built-in
+    Read/Grep/Bash; and (2) it stops the model from emitting tool_use blocks that
+    would exhaust ``max_turns=1`` and error the call.
+    """
+    from claude_agent_sdk import ClaudeAgentOptions
+
+    return ClaudeAgentOptions(
+        system_prompt=system, max_turns=1, model=model, allowed_tools=[]
+    )
+
+
 async def ask(
     system: str, user: str, *, model: str | None = None, timeout_s: float = 120.0
 ) -> str:
@@ -44,11 +61,11 @@ async def ask(
     crashing the pipeline).
     """
     try:
-        from claude_agent_sdk import ClaudeAgentOptions, query
+        from claude_agent_sdk import query
     except ImportError as e:  # pragma: no cover - SDK is present in this repo
         raise RuntimeError(f"claude-agent-sdk not installed: {e}") from e
 
-    options = ClaudeAgentOptions(system_prompt=system, max_turns=1, model=model)
+    options = _query_options(system, model)
 
     async def _run() -> list[Any]:
         collected: list[Any] = []
