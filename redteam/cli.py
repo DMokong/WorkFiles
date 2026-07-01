@@ -15,6 +15,7 @@ import click
 from . import preflight
 from .auth import DEFAULT_ALLOWED_SIGNERS, verify_engagement_file
 from .engagement import Engagement
+from .ledger.kms_seal import build_sealer
 from .orchestrator import Orchestrator, load_hmac_key
 
 
@@ -231,7 +232,10 @@ def run(
             engagement=eng,
             engagement_path=engagement_file.resolve(),
             audit_dir=audit_dir,
+            # KMS seals in-container when REDTEAM_KMS_KEY_ID is set; the file
+            # HMAC key is the local-dev fallback the sealer's absence selects.
             hmac_key=load_hmac_key(),
+            sealer=build_sealer(os.environ),
             assets_root=(assets_root.resolve() if assets_root else Path.cwd()),
         )
         options = orch.build_options()

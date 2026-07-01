@@ -14,7 +14,10 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
+
+if TYPE_CHECKING:  # avoid eagerly importing kms_seal (keeps chain.py import graph lean)
+    from .kms_seal import Sealer
 
 GENESIS_PREV_HASH = "0" * 64
 
@@ -73,12 +76,22 @@ def compute_payload_hash(payload: dict[str, Any], prev_hash: str, seq: int) -> s
 class LedgerWriter:
     """Append-only writer. Not thread-safe; one process owns one ledger."""
 
-    def __init__(self, path: Path | str, hmac_key: bytes | None = None):
+    def __init__(
+        self,
+        path: Path | str,
+        hmac_key: bytes | None = None,
+        sealer: "Sealer | None" = None,
+    ):
         # Construction is side-effect-free: the parent dir and file are created
         # lazily on the first append()/seal(), so a --dry-run that constructs a
         # LedgerWriter never touches the filesystem.
+        #
+        # `sealer` is the production seal (KMS in-container); when present it
+        # takes precedence over `hmac_key`. `hmac_key` is the file-key fallback
+        # used only by local pytest. Neither is required at construction.
         self.path = Path(path)
         self._hmac_key = hmac_key
+        self._sealer = sealer
         self._seq = 0
         self._head_hash = GENESIS_PREV_HASH
         if self.path.exists() and self.path.stat().st_size > 0:
@@ -120,10 +133,17 @@ class LedgerWriter:
         return self._head_hash
 
     def seal(self, seal_path: Path | str | None = None) -> Path:
-        if self._hmac_key is None:
-            raise RuntimeError("seal() requires an HMAC key")
         target = Path(seal_path) if seal_path else self.path.with_suffix(".seal")
         target.parent.mkdir(parents=True, exist_ok=True)
+        # Production path: an injected sealer (KMS in-container) owns its own
+        # seal-file format and is authoritative over the file key.
+        if self._sealer is not None:
+            self._sealer.write_seal(target, self.path.name, self._head_hash, self._seq)
+            return target
+        if self._hmac_key is None:
+            raise RuntimeError("seal() requires an HMAC key or a sealer")
+        # File-key fallback (local pytest only). `method` is recorded so the
+        # verifier dispatches explicitly instead of relying on its default.
         sig = hmac.new(self._hmac_key, self._head_hash.encode("ascii"), hashlib.sha256)
         target.write_text(
             json.dumps(
@@ -131,6 +151,7 @@ class LedgerWriter:
                     "ledger": str(self.path.name),
                     "head_hash": self._head_hash,
                     "entry_count": self._seq,
+                    "method": "file",
                     "hmac_sha256": sig.hexdigest(),
                     "sealed_at": datetime.now(timezone.utc).isoformat(),
                 },

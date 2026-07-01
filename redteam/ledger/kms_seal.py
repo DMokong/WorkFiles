@@ -6,13 +6,13 @@ container assumes a workload role with `kms:GenerateMac` *only* on a
 single key ARN; the verifier role gets `kms:VerifyMac` *only*. Key
 material never leaves KMS, all usage is CloudTrail-logged.
 
-Blueprint stub: the boto3 calls are sketched but not wired into the
-orchestrator yet. The local-dev HMAC-file path in chain.py remains as a
-fallback. Next iteration should:
-  - inject a `Sealer` protocol into LedgerWriter (KMS or file)
-  - default to KMS in container, file in local pytest
-  - record `seal.method = "kms" | "file"` on the seal so reviewers can
-    tell at a glance.
+Wiring (build-next #2, done): `LedgerWriter` accepts an injected `Sealer`.
+`build_sealer(env)` returns a `KmsHmacSealer` when `REDTEAM_KMS_KEY_ID`
+is set and `None` otherwise, so the orchestrator seals with KMS
+in-container and falls back to the file-key path (in chain.py) for local
+pytest. Both seal files record `method` ("kms" | "file") so the verifier
+and reviewers can tell at a glance. The boto3 calls stay lazy: importing
+this module never requires AWS creds; only an actual sign/verify does.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import Mapping, Protocol
 
 
 class Sealer(Protocol):
@@ -30,6 +30,10 @@ class Sealer(Protocol):
     def sign(self, head_hash: str) -> str: ...
 
     def verify(self, head_hash: str, signature: str) -> bool: ...
+
+    def write_seal(
+        self, seal_path: Path, ledger_name: str, head_hash: str, entry_count: int
+    ) -> None: ...
 
 
 @dataclass
@@ -70,6 +74,56 @@ class KmsHmacSealer:
         )
         return bool(resp.get("MacValid"))
 
+    def write_seal(
+        self, seal_path: Path, ledger_name: str, head_hash: str, entry_count: int
+    ) -> None:
+        """Seal a chain head with a KMS MAC.
+
+        The recorded fields (`method`, `kms_key_arn`, `kms_region`,
+        `mac_algorithm`, `mac`) are exactly what `verify.py`'s KMS branch
+        reads back. `kms:GenerateMac` is called once, here.
+        """
+        seal_path.write_text(
+            json.dumps(
+                {
+                    "ledger": ledger_name,
+                    "head_hash": head_hash,
+                    "entry_count": entry_count,
+                    "method": self.method,
+                    "kms_key_arn": self.key_id,
+                    "kms_region": self.region,
+                    "mac_algorithm": self.mac_algorithm,
+                    "mac": self.sign(head_hash),
+                    "sealed_at": datetime.now(timezone.utc).isoformat(),
+                },
+                sort_keys=True,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+
+def build_sealer(env: Mapping[str, str]) -> KmsHmacSealer | None:
+    """Pick the production sealer from the environment.
+
+    `REDTEAM_KMS_KEY_ID` set -> `KmsHmacSealer` (KMS is authoritative
+    in-container). Absent -> `None`, so `LedgerWriter` falls back to its
+    file-key path (local pytest only). Region resolves from
+    `REDTEAM_KMS_REGION`, then the standard `AWS_REGION` /
+    `AWS_DEFAULT_REGION`; an empty region surfaces as a boto3 error at
+    sign time (fail loud), never a silent mis-seal.
+    """
+    key_id = env.get("REDTEAM_KMS_KEY_ID")
+    if not key_id:
+        return None
+    region = (
+        env.get("REDTEAM_KMS_REGION")
+        or env.get("AWS_REGION")
+        or env.get("AWS_DEFAULT_REGION")
+        or ""
+    )
+    return KmsHmacSealer(key_id=key_id, region=region)
+
 
 def write_kms_seal(
     seal_path: Path,
@@ -78,22 +132,5 @@ def write_kms_seal(
     entry_count: int,
     sealer: KmsHmacSealer,
 ) -> None:
-    """Convenience: produce a seal file using a KMS HMAC."""
-    seal_path.write_text(
-        json.dumps(
-            {
-                "ledger": ledger_name,
-                "head_hash": head_hash,
-                "entry_count": entry_count,
-                "method": sealer.method,
-                "kms_key_arn": sealer.key_id,
-                "kms_region": sealer.region,
-                "mac_algorithm": sealer.mac_algorithm,
-                "mac": sealer.sign(head_hash),
-                "sealed_at": datetime.now(timezone.utc).isoformat(),
-            },
-            sort_keys=True,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    """Convenience wrapper: delegates to `sealer.write_seal(...)`."""
+    sealer.write_seal(seal_path, ledger_name, head_hash, entry_count)

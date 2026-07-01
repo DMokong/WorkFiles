@@ -12,7 +12,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .assets import AssetIndex, assert_assets_exist, build_index
 from .budget import BudgetLedger
@@ -27,6 +27,9 @@ from .mcp_external import record_registrations as record_external_mcp_registrati
 from .tools import load_pack
 from .tools._context import ToolContext
 from .tools._sdk_shim import AgentDefinition, HookMatcher
+
+if TYPE_CHECKING:
+    from .ledger.kms_seal import Sealer
 
 
 @dataclass
@@ -47,6 +50,7 @@ class Orchestrator:
         engagement_path: Path,
         audit_dir: Path,
         hmac_key: bytes | None = None,
+        sealer: "Sealer | None" = None,
         assets_root: Path | None = None,
     ):
         self.engagement = engagement
@@ -61,7 +65,9 @@ class Orchestrator:
         # Construction must be side-effect-free so --dry-run touches no disk.
         # The audit dir is created in start_session(); LedgerWriter is lazy.
         ledger_path = audit_dir / f"{engagement.id}.jsonl"
-        self.ledger = LedgerWriter(ledger_path, hmac_key=hmac_key)
+        # `sealer` (KMS in-container) is authoritative over `hmac_key`; when it
+        # is None the LedgerWriter uses the file-key path for local pytest.
+        self.ledger = LedgerWriter(ledger_path, hmac_key=hmac_key, sealer=sealer)
         self.audit = AuditWriter(self.ledger, redactor=Redactor())
         self.scope = ScopeGuard(engagement)
         self.telemetry = Telemetry(service_name=f"redteam:{engagement.id}")
@@ -303,7 +309,7 @@ class Orchestrator:
         try:
             seal_path = self.ledger.seal()
         except RuntimeError:
-            pass  # no HMAC key (local dev); KMS path is wired separately
+            pass  # neither a KMS sealer nor a file HMAC key present (dev only)
         return RunResult(
             engagement_id=self.engagement.id,
             head_hash=self.ledger.head_hash,

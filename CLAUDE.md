@@ -77,6 +77,14 @@ docs/PLAN.md            full design doc
   `tests/container/smoke_rt23.sh` (RT-23)
 - `redteam/tools/report.py` — atomic SARIF writer (temp + `os.replace`,
   serialize-first) under an asyncio.Lock; corrupt base quarantined (RT-21)
+- `redteam/ledger/kms_seal.py` — KMS HMAC seal is **wired** (build-next #2):
+  `build_sealer(env)` returns a `KmsHmacSealer` when `REDTEAM_KMS_KEY_ID` is
+  set (else `None`); `LedgerWriter` takes an injected `sealer` that is
+  authoritative over the file HMAC key; the CLI `run` path injects
+  `build_sealer(os.environ)`. The file-key path in `chain.py` stays as the
+  local-pytest fallback and now records `method: "file"`. `verify.py`
+  dispatches on `seal["method"]`. boto3 stays lazy (import-safe, no live AWS
+  call in any mocked test). Tested in `tests/test_kms_sealer_switch.py`
 - `redteam/preflight.py` + `redteam doctor [--probe]` — readiness checks
   (claude CLI present/recent, model backend incl. Bedrock/Vertex, writable
   dirs); `--probe` spawns the SDK transport to prove the agent loop launches
@@ -100,10 +108,6 @@ docs/PLAN.md            full design doc
   and the M3 batch in `docs/review-findings.json`.
 
 **Stubbed / blueprint-only (clearly marked):**
-- `redteam/ledger/kms_seal.py` — the `Sealer` protocol + `KmsHmacSealer`
-  exist and `verify.py` dispatches on `seal["method"]`, but
-  `Orchestrator.seal()` still uses the file-key path; switch the default
-  to KMS when `REDTEAM_KMS_KEY_ID` is set (build-next #2)
 - `redteam/tools/{recon,web,cloud,network,whitebox,report}.py` — all
   are MCP-shaped but most tool bodies return `not_implemented`
 - `redteam/runtime/docker-compose.yml` — references `.secrets/` files
@@ -177,11 +181,18 @@ Since the last revision, **M3 (the `redteam triage` findings pipeline) landed**
    the orchestrator; `--skip-signature` is the dev-only escape, and
    `--dry-run`/`validate` intentionally skip it. (The seam is the CLI run gate,
    not `Engagement.from_yaml` — same guarantee.)
-2. **Finish the KMS sealer switch.** The `Sealer` protocol + `KmsHmacSealer`
-   exist (`redteam/ledger/kms_seal.py`) and `verify.py` already dispatches on
-   `seal["method"]`, but `Orchestrator.seal()` still uses the file-key
-   `LedgerWriter.seal()`. Inject the sealer into `LedgerWriter` and default to
-   `KmsHmacSealer` when `REDTEAM_KMS_KEY_ID` is set, file-key otherwise.
+2. ~~Finish the KMS sealer switch.~~ **Done:** `build_sealer(env)`
+   (`redteam/ledger/kms_seal.py`) returns a `KmsHmacSealer` when
+   `REDTEAM_KMS_KEY_ID` is set, else `None`. `LedgerWriter` takes an injected
+   `sealer` (authoritative over the file HMAC key); `Orchestrator` passes it
+   through; the CLI `run` injects `build_sealer(os.environ)`, so the container
+   seals with KMS and local pytest keeps the file-key path (`method: "file"`).
+   `verify.py` dispatches on `seal["method"]`. `KmsHmacSealer.write_seal()`
+   owns the KMS seal-file format; boto3 stays lazy. Tested in
+   `tests/test_kms_sealer_switch.py` and hardened by a three-agent adversarial
+   pass (seal correctness / regression / hard-constraint). A live KMS seal
+   can't run on this host (no AWS creds); the boto3-mocked tests cover
+   sign/verify/round-trip.
 3. ~~Render `scope.egress_allowlist` into nftables in `entrypoint.sh`.~~
    **Done (RT-23):** `redteam/runtime/render_netpolicy.py` renders a
    default-deny nft ruleset (IMDS denied first, overlapping entries

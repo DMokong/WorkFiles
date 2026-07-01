@@ -120,6 +120,29 @@
 > (documented non-goals): semantic dedup, CMDB/environmental CVSS +
 > offensive-priority, Jira upsert of triaged findings, multi-backend routing.
 
+> **Update 2026-07-02 (later) — build-next #2: the KMS sealer switch is wired.**
+> The `Sealer` protocol + `KmsHmacSealer` existed and `verify.py` already
+> dispatched on `seal["method"]`, but `Orchestrator.seal()` still used the file
+> HMAC key. Now `build_sealer(env)` returns a `KmsHmacSealer` when
+> `REDTEAM_KMS_KEY_ID` is set (region from `REDTEAM_KMS_REGION` → `AWS_REGION`
+> → `AWS_DEFAULT_REGION`) and `None` otherwise; `LedgerWriter` takes an
+> injected `sealer` that is **authoritative over** the file key; the CLI `run`
+> path injects `build_sealer(os.environ)` beside `load_hmac_key()`. So the
+> container seals with **KMS** (`kms:GenerateMac`) while local pytest keeps the
+> file-key fallback — which now records `method: "file"` so the verifier
+> dispatches explicitly. `KmsHmacSealer.write_seal()` owns the KMS seal-file
+> format (the `write_kms_seal` free fn delegates to it); **boto3 stays lazy**
+> (import-safe, no live AWS call in any mocked test). Fail-closed preserved:
+> `seal()` still raises when neither a sealer nor a key is present, and a real
+> `kms:GenerateMac` error propagates (botocore errors aren't `RuntimeError`)
+> rather than silently producing an unsealed ledger. Built TDD
+> (`tests/test_kms_sealer_switch.py`, **280 passed, ruff clean**) and hardened
+> by a three-agent adversarial pass (seal/verify correctness + fail-closed,
+> regression hunter, hard-constraint compliance) — all clean; the only flag was
+> the CLAUDE.md doc-sync this batch applies. A live KMS seal is unexercisable
+> here (no AWS creds on the host); the boto3-mocked tests cover
+> sign/verify/write_seal/round-trip.
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9
