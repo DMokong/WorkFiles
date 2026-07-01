@@ -28,6 +28,7 @@ scope:
     - mcp.atlassian.com        # only if external_mcp.atlassian enabled
     - kms.us-east-1.amazonaws.com
     - crt.sh
+    - semgrep.dev              # whitebox semgrep_scan: `--config auto` rule registry
     - staging.example.com
   # Optional: bind the recon gh_* tools to specific GitHub orgs/users. When
   # set, gh_search_code / gh_search_repos / gh_repo_view refuse any other

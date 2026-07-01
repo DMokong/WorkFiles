@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from . import _scanners
 from ._context import ToolContext
 from ._sdk_shim import create_sdk_mcp_server, tool
 
@@ -18,6 +19,27 @@ PACK_NAME = "whitebox"
 
 _MAX_GREP_MATCHES = 200
 _MAX_FILE_BYTES = 256 * 1024
+_MAX_FINDINGS = 500
+
+# Default scanner per IaC kind; the agent may override to the other one where
+# it makes sense (tfsec is terraform-only; checkov covers both).
+_IAC_DEFAULT_SCANNER = {"terraform": "tfsec", "kubernetes": "checkov"}
+
+
+def _shape_scan(result: dict[str, Any], **labels: Any) -> dict[str, Any]:
+    """Cap the finding list and attach role/kind labels to a scan result."""
+    if result.get("status") != "ok":
+        return {**result, **labels}
+    findings = result["findings"]
+    return {
+        "status": "ok",
+        "scanner": result["scanner"],
+        "exit_code": result.get("exit_code"),
+        **labels,
+        "count": min(len(findings), _MAX_FINDINGS),
+        "truncated": len(findings) > _MAX_FINDINGS,
+        "findings": findings[:_MAX_FINDINGS],
+    }
 
 
 def build_pack(ctx: ToolContext):
@@ -125,35 +147,53 @@ def build_pack(ctx: ToolContext):
 
     @tool(
         "whitebox__semgrep_scan",
-        "Stub: run `semgrep --config auto` against a source repo. Returns SARIF-shaped findings.",
+        "Run `semgrep --config auto --json` against an indexed source repo "
+        "(read-only). Returns normalised findings.",
         {
             "type": "object",
-            "properties": {"role": {"type": "string"}},
+            "properties": {"role": {"type": "string", "description": "source_repos.role from the YAML"}},
             "required": ["role"],
         },
     )
     async def semgrep_scan(role: str) -> dict[str, Any]:
-        return {
-            "role": role,
-            "status": "not_implemented",
-            "hint": "shell out to `semgrep --config auto --json` against the repo's host_path",
-        }
+        repo = next(
+            (e for e in ctx.assets.by_kind("source") if e.metadata.get("role") == role),
+            None,
+        )
+        if repo is None:
+            return {"status": "error", "error": f"no source repo with role={role!r}", "role": role}
+        return _shape_scan(_scanners.scan("semgrep", repo.host_path), role=role)
 
     @tool(
         "whitebox__iac_scan",
-        "Stub: run tfsec / checkov / kube-linter against an indexed IaC asset.",
+        "Run tfsec (terraform) or checkov (terraform/kubernetes) against an "
+        "indexed IaC asset (read-only). Returns normalised findings.",
         {
             "type": "object",
-            "properties": {"kind": {"type": "string", "enum": ["terraform", "kubernetes"]}},
+            "properties": {
+                "kind": {"type": "string", "enum": ["terraform", "kubernetes"]},
+                "scanner": {
+                    "type": "string",
+                    "enum": ["tfsec", "checkov"],
+                    "description": "override the default (terraform->tfsec, kubernetes->checkov)",
+                },
+            },
             "required": ["kind"],
         },
     )
-    async def iac_scan(kind: str) -> dict[str, Any]:
-        return {
-            "kind": kind,
-            "status": "not_implemented",
-            "hint": "tfsec for terraform, kube-linter for kubernetes; outputs normalised to SARIF",
-        }
+    async def iac_scan(kind: str, scanner: str | None = None) -> dict[str, Any]:
+        asset = next(
+            (e for e in ctx.assets.by_kind("iac") if e.metadata.get("kind") == kind),
+            None,
+        )
+        if asset is None:
+            return {"status": "error", "error": f"no IaC asset with kind={kind!r}", "kind": kind}
+        chosen = scanner or _IAC_DEFAULT_SCANNER.get(kind)
+        if chosen not in ("tfsec", "checkov"):
+            return {"status": "error", "error": f"unsupported IaC scanner {scanner!r} (use tfsec or checkov)", "kind": kind}
+        if chosen == "tfsec" and kind != "terraform":
+            return {"status": "error", "error": "tfsec only scans terraform; use checkov for kubernetes", "kind": kind}
+        return _shape_scan(_scanners.scan(chosen, asset.host_path), kind=kind)
 
     @tool(
         "whitebox__openapi_diff",

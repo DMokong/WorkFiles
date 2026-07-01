@@ -163,6 +163,28 @@
 > stays the ultimate boundary — the docstring now says so honestly instead of
 > overclaiming. `whois` / `cert_transparency` remain documented stubs.
 
+> **Update 2026-07-02 (later still²) — build-next #6: real semgrep / tfsec /
+> checkov.** New `redteam/tools/_scanners.py` runs the three scanners for the
+> whitebox pack and normalises each tool's JSON to one finding shape;
+> `whitebox__semgrep_scan` (by `role`) and `whitebox__iac_scan` (by `kind`,
+> optional `scanner` override) replace the `not_implemented` stubs. The
+> load-bearing subtlety: **these scanners exit non-zero when they find
+> issues**, so the code parses stdout JSON *regardless of exit code* — valid
+> JSON is success, unparseable output is the error. No shell (list argv), and
+> the scanned path is always a resolved asset host_path, never agent-typed, so
+> there's no injection surface. Built TDD; a two-agent adversarial pass
+> (correctness/schema-fidelity/totality + regression) confirmed the parser keys
+> match the real semgrep/tfsec/checkov schemas and found **two real totality
+> defects**, both fixed: (1) `json.loads(stdout or "{}")` **laundered an
+> empty-stdout crash** (exit ≥2, output only on stderr) into a clean "ok, 0
+> findings" — a security scanner silently reporting a failed run as clean is a
+> trust bug; empty/whitespace stdout is now an error; (2) the parsers raised
+> `TypeError` on a truthy non-list `results`/`failed_checks` — now guarded by
+> `_as_list`. Full suite **320 passed, ruff clean**. `sbom_query` /
+> `openapi_diff` / `dependency_audit` remain documented stubs. NB: `semgrep
+> --config auto` needs `semgrep.dev` in the egress allowlist (added to the
+> example).
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9

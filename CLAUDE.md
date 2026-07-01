@@ -108,13 +108,15 @@ docs/PLAN.md            full design doc
   and the M3 batch in `docs/review-findings.json`.
 
 **Stubbed / blueprint-only (clearly marked):**
-- `redteam/tools/{web,cloud,network,whitebox,report}.py` — MCP-shaped but
-  most tool bodies return `not_implemented` (report + whitebox grep/read are
-  real; the rest are stubs). `redteam/tools/recon.py`'s `gh_*` tools are now
-  **real** (build-next #4): read-only, org-scoped `gh` CLI wrappers
+- `redteam/tools/{web,cloud,network,report}.py` — MCP-shaped but most tool
+  bodies return `not_implemented` (report is real). In `whitebox.py`,
+  `repo_read` / `repo_grep` / `list_assets` and now `semgrep_scan` / `iac_scan`
+  are **real** (build-next #6 — see `redteam/tools/_scanners.py`); `sbom_query`
+  / `openapi_diff` / `dependency_audit` remain stubs. In `recon.py`, the `gh_*`
+  tools are **real** (build-next #4): read-only, org-scoped `gh` CLI wrappers
   (`gh_search_code` / `gh_search_repos` / `gh_repo_view`), argv-not-shell,
   input-validated, total; `whois` / `cert_transparency` remain stubs.
-  Tested in `tests/test_recon_gh.py`
+  Tested in `tests/test_recon_gh.py` + `tests/test_whitebox_scanners.py`
 - `redteam/runtime/docker-compose.yml` — references `.secrets/` files
   (`anthropic_api_key`, `gh_token`) that do not exist; create them before
   bringing the stack up. `atlassian_token` is opt-in via the
@@ -216,7 +218,18 @@ Since the last revision, **M3 (the `redteam triage` findings pipeline) landed**
    deterministic external key (e.g. `redteam-{engagement_id}-{finding_hash[:12]}`)
    so re-runs update tickets in place — for both `report.py` (live findings) and
    the M3 `triage` output (triaged findings; M3 deferred this).
-6. **Real semgrep / tfsec / checkov calls in `whitebox.py`.**
+6. ~~Real semgrep / tfsec / checkov calls in `whitebox.py`.~~ **Done:**
+   `redteam/tools/_scanners.py` runs semgrep (source) / tfsec + checkov (IaC)
+   via a list argv (no shell; the scanned path is always a resolved asset
+   host_path, never agent-typed) and normalises each tool's JSON to a common
+   finding shape. Load-bearing subtlety: these scanners **exit non-zero when
+   they find issues**, so output is parsed regardless of exit code — valid JSON
+   = success, unparseable/empty output = error (an empty-stdout crash is NOT
+   laundered into a clean scan). All paths are total. `whitebox__semgrep_scan`
+   (by `role`) and `whitebox__iac_scan` (by `kind`, optional `scanner`
+   override) wire it up. Tested in `tests/test_whitebox_scanners.py` (18
+   cases) + a two-agent adversarial pass (correctness/totality + regression).
+   NB: `semgrep --config auto` needs `semgrep.dev` in `egress_allowlist`.
 7. **OTel exporter — confirm SDK env vars and add a starter dashboard
    provisioning file** so `docker compose up` lights up Grafana with
    panels populated.
