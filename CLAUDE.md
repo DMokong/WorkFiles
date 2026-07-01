@@ -67,6 +67,9 @@ docs/PLAN.md            full design doc
 - `redteam/ledger/chain.py` — hash-chained append, replay, tamper detection
 - `redteam/assets.py` — read-only mount index with metadata
 - `redteam/orchestrator.py` — hook dispatch, budget gate, subagent loading
+- `redteam/auth.py` — SSH detached-signature verification (`ssh-keygen -Y`);
+  `redteam run` gates a real run on it before the orchestrator is built
+  (tested in `tests/test_signature_verify.py`)
 - `redteam/runtime/render_netpolicy.py` + `entrypoint.sh` — render
   `scope.egress_allowlist` into an nft default-deny ruleset (IMDS denied
   first; overlapping entries collapsed) and load it before privilege drop;
@@ -97,10 +100,10 @@ docs/PLAN.md            full design doc
   and the M3 batch in `docs/review-findings.json`.
 
 **Stubbed / blueprint-only (clearly marked):**
-- `redteam/auth.py` — shells to ssh-keygen but isn't called from the
-  parse path yet; wire it into `Engagement.from_yaml`
-- `redteam/ledger/kms_seal.py` — boto3 calls sketched; orchestrator
-  still uses the file-key path; add a `Sealer` protocol and switch
+- `redteam/ledger/kms_seal.py` — the `Sealer` protocol + `KmsHmacSealer`
+  exist and `verify.py` dispatches on `seal["method"]`, but
+  `Orchestrator.seal()` still uses the file-key path; switch the default
+  to KMS when `REDTEAM_KMS_KEY_ID` is set (build-next #2)
 - `redteam/tools/{recon,web,cloud,network,whitebox,report}.py` — all
   are MCP-shaped but most tool bodies return `not_implemented`
 - `redteam/runtime/docker-compose.yml` — references `.secrets/` files
@@ -164,24 +167,39 @@ ENGAGEMENT=/engagements/example.yaml \
 
 ## What to build next (suggested order)
 
-1. **Wire `auth.SignatureVerifier` into `Engagement.from_yaml`** so an
-   unsigned or bad-signed YAML never reaches the orchestrator.
-2. **Add a `Sealer` protocol to `LedgerWriter`** and switch the default
-   to `KmsHmacSealer` when `REDTEAM_KMS_KEY_ID` is set, file-key
-   otherwise. Update `verify.py` to dispatch on `seal["method"]`.
+Since the last revision, **M3 (the `redteam triage` findings pipeline) landed**
+(see Status). The remaining order:
+
+1. ~~Wire signature verification so an unsigned/bad-signed YAML never reaches
+   the orchestrator.~~ **Done:** `redteam run` verifies the detached operator
+   signature (`auth.verify_engagement_file` against
+   `engagements/authorized_signers`) and exits (code 3) *before* constructing
+   the orchestrator; `--skip-signature` is the dev-only escape, and
+   `--dry-run`/`validate` intentionally skip it. (The seam is the CLI run gate,
+   not `Engagement.from_yaml` — same guarantee.)
+2. **Finish the KMS sealer switch.** The `Sealer` protocol + `KmsHmacSealer`
+   exist (`redteam/ledger/kms_seal.py`) and `verify.py` already dispatches on
+   `seal["method"]`, but `Orchestrator.seal()` still uses the file-key
+   `LedgerWriter.seal()`. Inject the sealer into `LedgerWriter` and default to
+   `KmsHmacSealer` when `REDTEAM_KMS_KEY_ID` is set, file-key otherwise.
 3. ~~Render `scope.egress_allowlist` into nftables in `entrypoint.sh`.~~
    **Done (RT-23):** `redteam/runtime/render_netpolicy.py` renders a
    default-deny nft ruleset (IMDS denied first, overlapping entries
    collapsed); the entrypoint loads it and fails closed.
 4. **Implement the recon `gh_*` tools** as wrappers around the `gh` CLI
    so the agent can search the org's GitHub for context without an MCP.
-5. **Implement Atlassian MCP wiring + Jira upsert in `report.py`** with
-   a deterministic external key (e.g. `redteam-{engagement_id}-{finding_hash[:12]}`)
-   so re-runs update tickets idempotently.
+5. **Implement Atlassian MCP wiring + idempotent Jira upsert** with a
+   deterministic external key (e.g. `redteam-{engagement_id}-{finding_hash[:12]}`)
+   so re-runs update tickets in place — for both `report.py` (live findings) and
+   the M3 `triage` output (triaged findings; M3 deferred this).
 6. **Real semgrep / tfsec / checkov calls in `whitebox.py`.**
 7. **OTel exporter — confirm SDK env vars and add a starter dashboard
    provisioning file** so `docker compose up` lights up Grafana with
    panels populated.
+8. **M3 v-next (deferred, marked in the spec):** semantic/LLM dedup (v1 dedup is
+   deterministic-only), CMDB / environmental CVSS + offensive-priority scoring,
+   and multi-backend model routing for `--verify`/`--chain` (v1 uses the single
+   engagement backend).
 
 ## What NOT to do
 
