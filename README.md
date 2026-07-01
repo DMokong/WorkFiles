@@ -72,6 +72,42 @@ The compose stack also brings up an OpenTelemetry collector and a local
 Grafana / Tempo dev stack on profile `dev`. In production, point
 `CENTRAL_OTLP_ENDPOINT` at the org's central stack.
 
+## Triage — refine an engagement's findings
+
+An engagement records raw findings into the sealed ledger. `redteam triage`
+turns those into a **trustworthy** report: deduplicated, CWE/CVSS-enriched,
+optionally verified and composed into exploit chains. It reads the ledger
+**read-only** (never mutates or re-seals it) and writes three artifacts next to
+it (or under `--out`):
+
+- `<ledger>.triaged.sarif` — refined SARIF 2.1.0 (one result per kept finding,
+  CWE taxonomy, CVSS + verdict in `properties`, dedup `relatedLocations`),
+- `<ledger>.report.md` — a human-readable summary + findings table + exploit
+  chains + a dropped-findings appendix,
+- `<ledger>.triage.json` — the full structured report.
+
+```bash
+# Deterministic stages only (prefilter → dedup → enrich → emit).
+# No model, no credentials. --assets-root lets prefilter confirm each finding's
+# file exists inside the reviewed source tree (and stays inside it).
+redteam triage /audit/ENG-ID.jsonl --assets-root ./targets/example-api
+
+# Add the opt-in model stages:
+#   --verify  adversarially re-checks each finding (confidence-gated; a refuted
+#             finding is dropped, an unconfirmable one is kept as UNVERIFIED —
+#             never silently laundered), and
+#   --chain   composes the kept findings into validated exploit chains.
+redteam triage /audit/ENG-ID.jsonl --assets-root ./targets/example-api \
+  --verify --chain --min-confidence 7 --out ./triage-out
+```
+
+`--verify` / `--chain` need a reachable model — an `ANTHROPIC_API_KEY` (or
+Amazon Bedrock / Google Vertex via `CLAUDE_CODE_USE_BEDROCK` / `_VERTEX`), **or**
+a logged-in `claude` CLI. Without any of those the model stages refuse cleanly
+(exit non-zero, no artifacts written) and you can still run the deterministic
+path. Every model-output path degrades rather than crashing, so a garbage or
+truncated reply never breaks the run.
+
 ## Design constraints (binding for v1)
 
 - **Package name** is `redteam`.
@@ -92,9 +128,10 @@ See [docs/PLAN.md](docs/PLAN.md) for the rationale behind each.
 
 ```
 redteam/                core package
-├── cli.py              `redteam run` / `redteam validate`
+├── cli.py              `redteam run` / `triage` / `validate` / `doctor`
 ├── orchestrator.py     ClaudeSDKClient wiring
 ├── engagement.py       pydantic schema (single source of truth)
+├── preflight.py        readiness checks + model-stage gate
 ├── auth.py             SSH-signature verification
 ├── assets.py           read-only mount of source / IaC / specs
 ├── budget.py           turn / cost / per-target call accounting
@@ -102,6 +139,7 @@ redteam/                core package
 ├── hooks/              scope_guard, audit_writer, redactor, telemetry
 ├── ledger/             chain + KMS seal + standalone verifier
 ├── tools/              first-party in-process MCP servers
+├── pipeline/           `redteam triage`: prefilter/dedup/enrich + verify/chain
 ├── subagents/          markdown system prompts
 └── runtime/            Dockerfile, docker-compose, entrypoint, netpolicy, otel/
 
@@ -123,7 +161,9 @@ engagement end-to-end — use `redteam doctor --probe` to confirm readiness,
 and `engagements/whitebox-first.example.yaml` for the first contained run.
 A true *autonomous* run needs a model backend (`ANTHROPIC_API_KEY`, or
 Amazon Bedrock / Google Vertex via `CLAUDE_CODE_USE_BEDROCK` / `_VERTEX`).
-Still stubbed and clearly marked: the recon/cloud/network tool bodies, the
-KMS sealer, the SSH-sig parse hook, and the verify/dedup/enrich finding
-pipeline.
-[CLAUDE.md](CLAUDE.md) lists the suggested next-steps order.
+The **M3 `redteam triage` findings pipeline** (prefilter / dedup / CWE+CVSS
+enrich / opt-in adversarial verify + exploit-chain synthesis → refined SARIF +
+markdown + JSON) is implemented and live-verified — see
+[Triage](#triage--refine-an-engagements-findings). Still stubbed and clearly
+marked: the recon/cloud/network tool bodies, the KMS sealer, and the SSH-sig
+parse hook. [CLAUDE.md](CLAUDE.md) lists the suggested next-steps order.

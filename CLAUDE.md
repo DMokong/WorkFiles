@@ -38,9 +38,10 @@ cuts, not gaps.
 
 ```
 redteam/                package
-├── cli.py              click entry point: `redteam run <yaml>`
+├── cli.py              click entry point: `redteam run` / `triage` / `validate` / `doctor`
 ├── orchestrator.py     ClaudeSDKClient wiring; thin
 ├── engagement.py       pydantic schema (single source of truth)
+├── preflight.py        readiness checks (CLI/backend/dirs) + model-stage gate
 ├── auth.py             SSH-signature verification (stub)
 ├── assets.py           read-only mount of pre-cloned repos / IaC / specs
 ├── budget.py           turn / cost / per-target call accounting
@@ -48,6 +49,7 @@ redteam/                package
 ├── hooks/              policy spine (scope_guard, audit_writer, redactor, telemetry)
 ├── ledger/             append-only hash-chained JSONL + KMS seal + verifier
 ├── tools/              first-party in-process MCP servers (stubbed bodies)
+├── pipeline/           M3 `redteam triage`: prefilter/dedup/enrich + opt-in verify/chain
 ├── subagents/          markdown system prompts for recon / analyst / whitebox / exploiter
 └── runtime/            Dockerfile, docker-compose.yml, entrypoint, netpolicy, otel/
 
@@ -81,6 +83,18 @@ docs/PLAN.md            full design doc
   A true autonomous run still needs a model backend (key, or
   `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX` + creds, with the backend host added to
   `egress_allowlist`).
+- **M3 — `redteam/pipeline/` + `redteam triage <ledger>` (DONE, live-verified).**
+  A separate, re-runnable command that reads a sealed engagement ledger
+  **read-only** and emits a refined report: prefilter → dedup → CWE/CVSS-enrich
+  → emit (SARIF 2.1.0 + markdown + `triage.json`). Deterministic stages need no
+  model/creds and are *total* (a bad finding is dropped-and-recorded, never
+  raised). Opt-in `--verify` (adversarial, confidence-gated; unparseable /
+  conflicting verdicts → UNVERIFIED and **kept**, never laundered to FP) and
+  `--chain` (validated ≥2-step exploit chains) reuse the engagement backend via
+  the SDK one-shot `query()`, gated on `preflight.model_stage_ready`. Built TDD;
+  a five-reviewer adversarial pass + a live run (precision 1.0, 3 chains)
+  hardened it. See `docs/superpowers/specs/2026-07-02-m3-findings-pipeline-design.md`
+  and the M3 batch in `docs/review-findings.json`.
 
 **Stubbed / blueprint-only (clearly marked):**
 - `redteam/auth.py` — shells to ssh-keygen but isn't called from the
@@ -108,6 +122,22 @@ docs/PLAN.md            full design doc
 - Hooks dispatch through `Orchestrator._build_hooks()`; treat that as
   the SDK seam — adapt to the SDK's actual API there, don't sprinkle
   imports across the package.
+- **`redteam triage` is READ-ONLY over the sealed ledger** — it must never
+  mutate, append to, or re-seal it. Its only writes are the three artifacts
+  under `--out` (`.triaged.sarif` / `.report.md` / `.triage.json`).
+- **Triage stages must degrade, never crash.** Deterministic stages drop-and-
+  record a bad finding (never raise); every model-output path is wrapped
+  (verify failure → UNVERIFIED-kept, chain failure → `chains=[]` + degraded).
+- **The verify/chain model turns get NO tools** (`allowed_tools=[]` in
+  `pipeline/llm.py::_query_options`). This is load-bearing: it keeps the model
+  inside the pipeline's source-containment (it reasons only from the excerpt
+  `stages._source_window` feeds it, never the host CLI's Read/Grep/Bash) and
+  stops tool_use blocks from exhausting `max_turns=1`. The verify/chain system
+  prompts say "you have NO tools" to match — don't reintroduce "walk the
+  callers"-style investigation.
+- `pipeline/load.py` imports **only the agent's report fields** from the ledger
+  (a whitelist); enrichment/verify fields (`cvss_*`, `verdict*`, `cwe*`) are set
+  by the pipeline, so a tampered ledger can't inject verify-grade trust.
 
 ## Build & test
 
@@ -117,6 +147,11 @@ redteam validate engagements/example.yaml      # parse-only check
 redteam run engagements/example.yaml --dry-run # build options without calling SDK
 redteam doctor                                 # readiness check (no token spend)
 pytest                                         # contract + RT/M-batch tests
+
+# M3 triage over a completed engagement's ledger (deterministic = no creds):
+redteam triage /audit/ENG-ID.jsonl --assets-root ./targets/example-api
+# add --verify and/or --chain to run the opt-in model stages (needs a backend
+# or a logged-in `claude` CLI); --out defaults to the ledger's parent dir.
 ```
 
 Container path (`ENGAGEMENT` is the in-CONTAINER path; compose mounts

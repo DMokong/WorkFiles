@@ -267,14 +267,14 @@ def run(
 @click.option(
     "--verify",
     is_flag=True,
-    help="Adversarially verify each finding with the model backend (opt-in; "
-    "requires a configured backend).",
+    help="Adversarially verify each finding with the model (opt-in; needs a "
+    "backend or a logged-in claude CLI).",
 )
 @click.option(
     "--chain",
     is_flag=True,
-    help="Compose kept findings into exploit chains with the model backend "
-    "(opt-in; requires a configured backend).",
+    help="Compose kept findings into exploit chains with the model (opt-in; "
+    "needs a backend or a logged-in claude CLI).",
 )
 @click.option(
     "--min-confidence",
@@ -297,7 +297,7 @@ def triage(
 
     Read-only over the ledger. The deterministic stages (prefilter, dedup,
     enrich, emit) always run and need no model or credentials; --verify and
-    --chain are opt-in and require a model backend.
+    --chain are opt-in and need a model backend or a logged-in claude CLI.
     """
     from .pipeline import emit as pipeline_emit
     from .pipeline import stages
