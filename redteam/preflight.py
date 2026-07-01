@@ -70,6 +70,25 @@ def detect_backend(env: Mapping[str, str]) -> BackendInfo:
     )
 
 
+def model_stage_ready(env: Mapping[str, str]) -> tuple[bool, str]:
+    """Whether the opt-in triage model stages (--verify/--chain) can reach a model.
+
+    Ready when an env backend is configured (direct key / Bedrock / Vertex) OR a
+    `claude` CLI is present to authenticate through (e.g. a Claude Code login /
+    session on a dev host, which ``detect_backend`` cannot see). Mirrors the
+    `run` command, which lets the spawned CLI handle auth; a present-but-not-
+    logged-in CLI then fails per-call at runtime and each verify degrades to
+    UNVERIFIED rather than being refused up front. Refuse only when there is
+    neither."""
+    backend = detect_backend(env)
+    if backend.ready:
+        return True, f"model backend: {backend.backend}"
+    cli = find_cli()
+    if cli:
+        return True, f"claude CLI at {cli} (login/session auth)"
+    return False, "no model backend and no claude CLI"
+
+
 def cli_version_ok(version_output: str) -> bool:
     """True if a `claude -v` string is at or above the SDK's minimum version.
 

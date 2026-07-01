@@ -303,17 +303,17 @@ def triage(
     from .pipeline import stages
     from .pipeline.load import findings_from_ledger
 
-    # Gate the model stages on a configured backend, mirroring the `run` path:
-    # refuse cleanly (no traceback, no artifacts written) rather than spawning a
-    # transport that would only fail on auth.
+    # Gate the model stages on a reachable model, mirroring the `run` path:
+    # refuse cleanly (no traceback, no artifacts written) only when there is
+    # neither an env backend nor a claude CLI to authenticate through.
     if verify or chain:
-        backend = preflight.detect_backend(os.environ)
-        if not backend.ready:
+        ready, detail = preflight.model_stage_ready(os.environ)
+        if not ready:
             click.echo(
-                "REFUSED: --verify/--chain need a model backend, but none is "
-                f"configured ({backend.detail}). Set ANTHROPIC_API_KEY or a "
-                "CLAUDE_CODE_USE_BEDROCK/VERTEX backend, or drop the flags to run "
-                "the deterministic stages only.",
+                "REFUSED: --verify/--chain need a reachable model "
+                f"({detail}). Set ANTHROPIC_API_KEY or a "
+                "CLAUDE_CODE_USE_BEDROCK/VERTEX backend, log in the claude CLI, "
+                "or drop the flags to run the deterministic stages only.",
                 err=True,
             )
             sys.exit(2)
