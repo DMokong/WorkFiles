@@ -61,12 +61,18 @@ class Finding(BaseModel):
     cvss_score: float | None = None
     cvss_rating: str | None = None  # Critical/High/Medium/Low/None
     cvss_source: Literal["vector", "severity_band"] | None = None
+    # environmental CVSS 3.1 (modified base + security requirements)
+    cvss_environmental_score: float | None = None
+    cvss_environmental_rating: str | None = None
     # --- dedup ---
     duplicates: list[DupLocation] = []
     # --- verify (opt-in) ---
     verdict: Verdict | None = None
     verdict_confidence: int | None = None  # 0..10
     verdict_reason: str = ""
+    # --- offensive priority (deterministic; computed after chains) ---
+    priority_score: int | None = None  # 0..100
+    priority_rating: str | None = None  # P1 (act now) .. P4
 
     @field_validator("title", mode="before")
     @classmethod

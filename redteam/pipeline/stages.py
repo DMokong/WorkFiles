@@ -129,10 +129,13 @@ def _within(a_start: int, a_end: int, b_start: int, b_end: int, tol: int) -> boo
 # --- enrich (deterministic; runs after verify) -------------------------------
 
 
-def enrich(findings: list[Finding]) -> None:
-    """Attach ``vuln_class``, ``cwe``/``cwe_name`` and a CVSS score+rating to each
-    finding in place. Uses a verify-produced ``cvss_vector`` when present, else a
-    severity-band score."""
+def enrich(
+    findings: list[Finding], *, security_requirements: dict[str, str] | None = None
+) -> None:
+    """Attach ``vuln_class``, ``cwe``/``cwe_name`` and CVSS (base + environmental)
+    to each finding in place. Uses a verify-produced ``cvss_vector`` when present,
+    else a severity-band score. ``security_requirements`` (engagement-wide
+    ``{"CR","IR","AR"}``) feed the environmental score."""
     for f in findings:
         f.vuln_class = f.derived_vuln_class()
         text = f"{f.title} {f.description}"
@@ -144,9 +147,64 @@ def enrich(findings: list[Finding]) -> None:
             if scored:
                 f.cvss_score, f.cvss_rating = scored
                 f.cvss_source = "vector"
+                env = cvss.environmental_score(f.cvss_vector, requirements=security_requirements)
+                # A garbage MODIFIED metric can make environmental_score fail even
+                # on a valid base vector; fall back to base so every scored finding
+                # carries an environmental value.
+                f.cvss_environmental_score, f.cvss_environmental_rating = env or scored
                 continue
         f.cvss_score, f.cvss_rating = cvss.severity_band(f.severity)
         f.cvss_source = "severity_band"
+        # No vector to modify: environmental defaults to the band score.
+        f.cvss_environmental_score, f.cvss_environmental_rating = f.cvss_score, f.cvss_rating
+
+
+# --- prioritise (deterministic; runs after chains) ---------------------------
+
+
+def _priority_rating(score: int) -> str:
+    if score >= 80:
+        return "P1"
+    if score >= 60:
+        return "P2"
+    if score >= 40:
+        return "P3"
+    return "P4"
+
+
+def prioritize(findings: list[Finding], chains: list[Chain]) -> None:
+    """Set an offensive ``priority_score`` (0..100) + ``priority_rating`` (P1..P4)
+    on each finding in place.
+
+    A deterministic blend, NOT a CVSS score: it starts from the environmental
+    CVSS (defensive severity) and adds offensive signals an attacker cares about
+    - network reachability / no auth / no interaction, a confirmed verdict, and
+    membership in a validated exploit chain. Weights are intentionally simple and
+    tunable; the point is a stable ordering of what to exploit first.
+    """
+    in_chain = {s for c in chains for s in c.steps}
+    for idx, f in enumerate(findings):
+        # Prefer the environmental score; an explicit 0.0 is a real value, not
+        # "missing", so use None checks rather than truthiness.
+        score10 = f.cvss_environmental_score
+        if score10 is None:
+            score10 = f.cvss_score
+        base = (score10 if score10 is not None else 0.0) * 10.0  # 0..100
+        bonus = 0.0
+        m = cvss.metrics(f.cvss_vector) if f.cvss_vector else None
+        if m:  # exploitability signals (max +15)
+            bonus += 5 if m.get("AV") == "N" else 0
+            bonus += 3 if m.get("AC") == "L" else 0
+            bonus += 4 if m.get("PR") == "N" else 0
+            bonus += 3 if m.get("UI") == "N" else 0
+        if f.verdict == "TRUE_POSITIVE":  # confirmed (max +15, scaled by confidence)
+            conf = f.verdict_confidence if f.verdict_confidence is not None else 7
+            bonus += (max(0, min(conf, 10)) / 10.0) * 15
+        if idx in in_chain:  # a step in a validated exploit chain (+20)
+            bonus += 20
+        score = int(round(max(0.0, min(base + bonus, 100.0))))
+        f.priority_score = score
+        f.priority_rating = _priority_rating(score)
 
 
 # --- verify (opt-in LLM, VVAH S6) -------------------------------------------
@@ -465,10 +523,11 @@ def run_triage(
     verify: bool = False,
     chain: bool = False,
     min_confidence: int = 7,
+    security_requirements: dict[str, str] | None = None,
     ask: AskFn | None = None,
     model: str | None = None,
 ) -> TriageReport:
-    """Triage: prefilter -> dedup -> [verify] -> enrich -> [chain] -> report.
+    """Triage: prefilter -> dedup -> [verify] -> enrich -> [chain] -> prioritise -> report.
 
     The deterministic core is credential-free and total. The opt-in ``verify``
     and ``chain`` stages use ``ask`` (defaulting to the ``llm.ask`` seam,
@@ -517,7 +576,7 @@ def run_triage(
             degraded_reasons.append("verify stage failed for every finding")
 
     t0 = time.perf_counter()
-    enrich(canonical)
+    enrich(canonical, security_requirements=security_requirements)
     timings["enrich_ms"] = (time.perf_counter() - t0) * 1000
 
     chains: list[Chain] = []
@@ -528,6 +587,10 @@ def run_triage(
         if chain_degraded:
             degraded = True
             degraded_reasons.append("chain stage produced no parseable result")
+
+    # Offensive priority uses the environmental CVSS (from enrich) and chain
+    # membership (from the chain stage), so it runs last. Always runs.
+    prioritize(canonical, chains)
 
     metrics: dict = {
         "input": input_count,

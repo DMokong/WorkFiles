@@ -252,6 +252,23 @@ def run(
     asyncio.run(_run_with_sdk(orch, options, signature))
 
 
+def _parse_security_requirements(spec: str) -> dict[str, str]:
+    """Parse ``CR:H,IR:M/AR:L`` into a {CR,IR,AR}->{H,M,L,X} dict. Raises on bad."""
+    import re
+
+    out: dict[str, str] = {}
+    for part in re.split(r"[,/]", spec):
+        part = part.strip()
+        if not part:
+            continue
+        key, sep, val = part.partition(":")
+        key, val = key.strip().upper(), val.strip().upper()
+        if not sep or key not in ("CR", "IR", "AR") or val not in ("H", "M", "L", "X"):
+            raise ValueError(f"invalid security requirement {part!r} (use CR/IR/AR : H/M/L/X)")
+        out[key] = val
+    return out
+
+
 @main.command("triage")
 @click.argument("ledger", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option(
@@ -289,6 +306,12 @@ def run(
 )
 @click.option("--model", default=None, help="Model id for the verify/chain stages.")
 @click.option(
+    "--security-requirements",
+    default=None,
+    help="Engagement-wide CVSS environmental Security Requirements for the "
+    "priority score, e.g. 'CR:H,IR:H,AR:M' (CR/IR/AR : H/M/L/X).",
+)
+@click.option(
     "--jira-project",
     default=None,
     help="Jira project key: also emit a <stem>.jira.json idempotent upsert "
@@ -302,6 +325,7 @@ def triage(
     chain: bool,
     min_confidence: int,
     model: str | None,
+    security_requirements: str | None,
     jira_project: str | None,
 ) -> None:
     """Refine a sealed engagement ledger's findings into a triaged report.
@@ -314,6 +338,14 @@ def triage(
     from .pipeline import emit as pipeline_emit
     from .pipeline import stages
     from .pipeline.load import findings_from_ledger
+
+    reqs: dict[str, str] | None = None
+    if security_requirements is not None:
+        try:
+            reqs = _parse_security_requirements(security_requirements)
+        except ValueError as e:
+            click.echo(f"INVALID: --security-requirements: {e}", err=True)
+            sys.exit(2)
 
     # Validate --jira-project with the same grammar as reporting.jira_project so
     # the CLI flag can't smuggle an unvalidated value into the emitted bundle.
@@ -350,6 +382,7 @@ def triage(
             verify=verify,
             chain=chain,
             min_confidence=min_confidence,
+            security_requirements=reqs,
             model=model,
         )
         stem = ledger.stem

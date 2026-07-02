@@ -263,10 +263,21 @@ remains. Each item below is kept for provenance (strikethrough = done):
    container — run the dev stack with `REDTEAM_NETPOLICY_OPTIONAL=1` or add the
    collector to `egress_allowlist`. (Traces populate once trace export is
    enabled — Claude Code beta flag or an app TracerProvider, RT-22.)
-8. **M3 v-next (deferred, marked in the spec):** semantic/LLM dedup (v1 dedup is
-   deterministic-only), CMDB / environmental CVSS + offensive-priority scoring,
-   and multi-backend model routing for `--verify`/`--chain` (v1 uses the single
-   engagement backend).
+8. **M3 v-next (partially done).**
+   - ~~environmental CVSS + offensive-priority scoring~~ **Done:**
+     `cvss.environmental_score` (CVSS 3.1 §7.3 modified base + Security
+     Requirements CR/IR/AR; cross-checked 0-mismatch vs the RedHat `cvss` lib
+     over ~12k vectors) feeds the enrich stage; a new deterministic
+     `stages.prioritize` (env-CVSS + exploitability + verdict + chain
+     membership → 0-100 score + P1-P4 tier) runs after chains. Driven by
+     `redteam triage --security-requirements CR:H,IR:H`; surfaced in SARIF
+     props, the markdown Priority/Env columns, and `triage.json`. Tested in
+     `tests/test_m3_cvss.py` + `tests/test_m3_priority.py`.
+   - **Still deferred:** semantic/LLM dedup (v1 dedup is deterministic-only);
+     multi-backend model routing for `--verify`/`--chain` (v1 uses the single
+     engagement backend); CMDB-sourced per-asset environmental inputs (v1 takes
+     engagement-wide Security Requirements from the `--security-requirements`
+     flag, not a CMDB).
 
 ## What NOT to do
 

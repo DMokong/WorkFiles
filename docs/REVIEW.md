@@ -234,6 +234,31 @@
 > hardened container — the dev stack needs `REDTEAM_NETPOLICY_OPTIONAL=1` or the
 > collector in `egress_allowlist`.
 
+> **Update 2026-07-02 (later⁶) — build-next #8 (part 1): environmental CVSS +
+> offensive-priority scoring.** The first M3 v-next slice. `cvss.py` gains
+> `environmental_score` — the full CVSS 3.1 §7.3 environmental equation
+> (modified base metrics + Security Requirements CR/IR/AR; temporal treated as
+> Not Defined) — feeding the deterministic `enrich` stage; a new
+> `stages.prioritize` (run after chains) blends environmental CVSS with the
+> offensive signals an attacker cares about — network reachability / no-auth /
+> no-interaction, a confirmed verdict, and exploit-chain membership — into a
+> 0–100 score and a P1–P4 tier. Driven by `redteam triage
+> --security-requirements CR:H,IR:H`; surfaced in SARIF props, the markdown
+> Priority/Env columns, and `triage.json`. Built TDD; a two-agent adversarial
+> pass **independently cross-checked the environmental math two ways** — a
+> from-scratch reimplementation of the FIRST.org equations over 9,984 vectors
+> **and** the RedHat `cvss` library over 2,400 vectors — **0 mismatches**. It
+> found **three real defects**, all fixed: (1) the docstring/test wrongly
+> claimed `env == base` as a *general* identity, but CVSS 3.1's base vs
+> environmental scope-changed impact formulas genuinely differ (`^15` vs
+> `·0.9731^13`), so an `S:C` vector with no inputs legitimately gives env ≠
+> base (e.g. 6.9→7.0) — corrected to scope the identity to `S:U`; (2) a garbage
+> *modified* metric left the env score `None` → now falls back to base; (3)
+> `prioritize` used `env or base` truthiness, mis-treating a legitimate `0.0`
+> env score as missing → explicit `None` checks. Full suite **373 passed, ruff
+> clean**. Still deferred (#8): semantic/LLM dedup, multi-backend
+> `--verify`/`--chain` routing, per-asset CMDB environmental inputs.
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9

@@ -126,8 +126,14 @@ def _sarif_properties(f: Finding) -> dict:
         props["cvssScore"] = f.cvss_score
         props["cvssRating"] = f.cvss_rating
         props["cvssSource"] = f.cvss_source
+    if f.cvss_environmental_score is not None:
+        props["cvssEnvironmentalScore"] = f.cvss_environmental_score
+        props["cvssEnvironmentalRating"] = f.cvss_environmental_rating
     if f.cvss_vector:
         props["cvssVector"] = f.cvss_vector
+    if f.priority_score is not None:
+        props["priorityScore"] = f.priority_score
+        props["priorityRating"] = f.priority_rating
     if f.verdict:
         props["verdict"] = f.verdict
         props["verdictConfidence"] = f.verdict_confidence
@@ -181,15 +187,21 @@ def _build_markdown(report: TriageReport) -> str:
     lines += ["", "## Findings", ""]
 
     if report.findings:
-        lines.append("| # | Severity | CWE | CVSS | Verdict | Location | Title |")
-        lines.append("|---|---|---|---|---|---|---|")
+        lines.append("| # | Priority | Severity | CWE | CVSS | Env | Verdict | Location | Title |")
+        lines.append("|---|---|---|---|---|---|---|---|---|")
         for i, f in enumerate(report.findings):
             cvss = f"{f.cvss_score} ({f.cvss_rating})" if f.cvss_score is not None else "-"
+            env = f"{f.cvss_environmental_score}" if f.cvss_environmental_score is not None else "-"
+            prio = (
+                f"{f.priority_rating} ({f.priority_score})"
+                if f.priority_score is not None
+                else "-"
+            )
             verdict = f.verdict or "-"
             if f.verdict and f.verdict_confidence is not None:
                 verdict = f"{f.verdict} ({f.verdict_confidence}/10)"
             lines.append(
-                f"| {i} | {f.severity} | {f.cwe or '-'} | {cvss} | {verdict} "
+                f"| {i} | {prio} | {f.severity} | {f.cwe or '-'} | {cvss} | {env} | {verdict} "
                 f"| {_md_cell(f.location or '-')} | {_md_cell(f.title)} |"
             )
     else:
