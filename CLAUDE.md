@@ -57,6 +57,9 @@ engagements/            example.yaml + authorized_signers (SSH allowed-signers)
 targets/                operator clones target repos here via `gh repo clone`
 tests/                  pytest contracts that pin behaviour; some skip when tools missing
 docs/PLAN.md            full design doc
+docs/REMAINING-WORK.md  consolidated open-items backlog (start here to continue)
+docs/REVIEW.md          dated narrative log of every fix batch
+docs/review-findings.json  structured findings + fix_batches (source of truth)
 ```
 
 ## Status: what's real vs. stubbed
@@ -182,6 +185,11 @@ ENGAGEMENT=/engagements/example.yaml \
 ```
 
 ## What to build next (suggested order)
+
+> **Picking this up later / elsewhere?** `docs/REMAINING-WORK.md` is the
+> consolidated backlog — the one remaining roadmap feature (CMDB inputs), the
+> open review findings (`RT-11/16/17/18/20/22/24/25/26` + low/nit), and the
+> live/deploy verification gaps, each with where-to-start pointers.
 
 **The roadmap is essentially complete.** #1–#7 are all DONE (this session
 landed #2 KMS sealer, #4 recon `gh_*`, #5 Jira upsert, #6 real scanners, #7
