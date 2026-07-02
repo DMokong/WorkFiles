@@ -183,10 +183,14 @@ ENGAGEMENT=/engagements/example.yaml \
 
 ## What to build next (suggested order)
 
-**Build-next items #1–#7 are all DONE** (this session landed #2 KMS sealer, #4
-recon `gh_*`, #5 Jira upsert, #6 real scanners, #7 OTel/Grafana; #1 signature
-verify and #3 nftables were done earlier). Only the deferred **#8 M3 v-next**
-remains. Each item below is kept for provenance (strikethrough = done):
+**The roadmap is essentially complete.** #1–#7 are all DONE (this session
+landed #2 KMS sealer, #4 recon `gh_*`, #5 Jira upsert, #6 real scanners, #7
+OTel/Grafana; #1 signature verify and #3 nftables were done earlier), and #8
+(M3 v-next) is done except for CMDB-sourced per-asset environmental inputs,
+which needs a real CMDB and is out of scope. The one remaining sub-item:
+environmental CVSS + offensive-priority, semantic/LLM dedup, and multi-backend
+model routing all landed this session. Each item below is kept for provenance
+(strikethrough = done):
 
 1. ~~Wire signature verification so an unsigned/bad-signed YAML never reaches
    the orchestrator.~~ **Done:** `redteam run` verifies the detached operator
@@ -283,11 +287,16 @@ remains. Each item below is kept for provenance (strikethrough = done):
      bad/unparseable/errored reply degrades (keeps everything). Total (hardened
      against a >4300-digit index crash). Tested in
      `tests/test_m3_semantic_dedup.py`.
-   - **Still deferred:** multi-backend model routing for
-     `--verify`/`--chain`/`--semantic-dedup` (v1 uses the single engagement
-     backend); CMDB-sourced per-asset environmental inputs (v1 takes
+   - ~~multi-backend model routing~~ **Done:** `llm.resolve_model(models,
+     stage, default)` + a `models` param on `run_triage` route each model stage
+     to its own model id — `redteam triage --verify-model … --chain-model …
+     --dedup-model …` (falling back to `--model`). The ambient backend (env) is
+     shared, so this routes the model *id* per stage, not the provider per call.
+     Tested in `tests/test_m3_model_routing.py`.
+   - **Still deferred:** CMDB-sourced per-asset environmental inputs — v1 takes
      engagement-wide Security Requirements from `--security-requirements`, not a
-     CMDB).
+     CMDB (needs a real CMDB integration; out of scope here). **This is the last
+     open roadmap item.**
 
 ## What NOT to do
 

@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from . import cwe, cvss
+from .llm import resolve_model
 from .models import Chain, DropReason, DroppedFinding, DupLocation, Finding, TriageReport
 
 _DEFAULT_LINE_TOLERANCE = 10
@@ -679,6 +680,7 @@ def run_triage(
     security_requirements: dict[str, str] | None = None,
     ask: AskFn | None = None,
     model: str | None = None,
+    models: dict[str, str] | None = None,
 ) -> TriageReport:
     """Triage: prefilter -> dedup -> [semantic dedup] -> [verify] -> enrich ->
     [chain] -> prioritise -> report.
@@ -715,7 +717,7 @@ def run_triage(
     if semantic_dedup:
         t0 = time.perf_counter()
         canonical, sem_dropped, sem_degraded = asyncio.run(
-            semantic_dedup_findings(canonical, ask=ask, model=model)
+            semantic_dedup_findings(canonical, ask=ask, model=resolve_model(models, "dedup", model))
         )
         timings["semantic_dedup_ms"] = (time.perf_counter() - t0) * 1000
         dropped += sem_dropped
@@ -735,7 +737,7 @@ def run_triage(
                 ask=ask,
                 min_confidence=min_confidence,
                 assets_root=assets_root,
-                model=model,
+                model=resolve_model(models, "verify", model),
             )
         )
         timings["verify_ms"] = (time.perf_counter() - t0) * 1000
@@ -752,7 +754,9 @@ def run_triage(
     chains: list[Chain] = []
     if chain:
         t0 = time.perf_counter()
-        chains, chain_degraded = asyncio.run(build_chains(canonical, ask=ask, model=model))
+        chains, chain_degraded = asyncio.run(
+            build_chains(canonical, ask=ask, model=resolve_model(models, "chain", model))
+        )
         timings["chain_ms"] = (time.perf_counter() - t0) * 1000
         if chain_degraded:
             degraded = True

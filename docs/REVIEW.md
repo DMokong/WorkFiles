@@ -280,6 +280,21 @@
 > ruff clean**; the default (no-flag) path is byte-for-byte unchanged. Remaining
 > #8: multi-backend model routing, per-asset CMDB environmental inputs.
 
+> **Update 2026-07-02 (later⁸) — build-next #8 (part 3): multi-backend model
+> routing.** The last self-contained #8 item. `llm.resolve_model(models, stage,
+> default)` + a `models` param on `run_triage` let each model stage route to its
+> own model id — `redteam triage --verify-model … --chain-model … --dedup-model
+> …`, falling back to `--model`. (The Agent SDK's one-shot `query()` reads the
+> backend from the process env, not per-call, so this routes the model *id* per
+> stage; per-stage *provider* switching is beyond the seam — documented as
+> such.) Built TDD (a system-prompt spy asserts each stage gets its routed
+> model); a focused review confirmed the new module-top `from .llm import
+> resolve_model` does **not** leak the SDK into the deterministic path
+> (live-checked `sys.modules`), each stage routes the correct key, and the
+> no-override path is byte-for-byte unchanged. Full suite **391 passed, ruff
+> clean**. The only remaining roadmap item is CMDB-sourced per-asset
+> environmental inputs (needs a real CMDB; out of scope).
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9

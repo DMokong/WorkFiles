@@ -14,6 +14,15 @@ from collections.abc import Iterable
 from typing import Any
 
 
+def resolve_model(models: dict[str, str] | None, stage: str, default: str | None) -> str | None:
+    """Per-stage model routing: a non-empty override for ``stage`` wins, else the
+    ``default`` (the single ``--model``). Lets --verify/--chain/--semantic-dedup
+    run on different model ids (the ambient backend is shared; this routes the
+    model id, not the provider)."""
+    override = (models or {}).get(stage)
+    return override or default
+
+
 def _collect_text(messages: Iterable[Any]) -> str:
     """Concatenate the text of every assistant ``TextBlock`` in a message stream.
 

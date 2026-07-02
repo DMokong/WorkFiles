@@ -311,7 +311,10 @@ def _parse_security_requirements(spec: str) -> dict[str, str]:
     show_default=True,
     help="Confidence gate (0-10) for keeping a TRUE_POSITIVE under --verify.",
 )
-@click.option("--model", default=None, help="Model id for the verify/chain stages.")
+@click.option("--model", default=None, help="Default model id for the model stages.")
+@click.option("--verify-model", default=None, help="Override the model id for --verify.")
+@click.option("--chain-model", default=None, help="Override the model id for --chain.")
+@click.option("--dedup-model", default=None, help="Override the model id for --semantic-dedup.")
 @click.option(
     "--security-requirements",
     default=None,
@@ -333,6 +336,9 @@ def triage(
     semantic_dedup: bool,
     min_confidence: int,
     model: str | None,
+    verify_model: str | None,
+    chain_model: str | None,
+    dedup_model: str | None,
     security_requirements: str | None,
     jira_project: str | None,
 ) -> None:
@@ -393,6 +399,11 @@ def triage(
             min_confidence=min_confidence,
             security_requirements=reqs,
             model=model,
+            models={
+                k: v
+                for k, v in {"verify": verify_model, "chain": chain_model, "dedup": dedup_model}.items()
+                if v
+            },
         )
         stem = ledger.stem
         paths = pipeline_emit.emit_report(report, out_dir, stem, jira_project=jira_project)
