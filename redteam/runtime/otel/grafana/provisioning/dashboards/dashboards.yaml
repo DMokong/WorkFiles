@@ -1,0 +1,15 @@
+# Grafana dashboard provisioning: auto-load every dashboard JSON mounted under
+# /var/lib/grafana/dashboards so `docker compose up` shows populated panels with
+# no manual import.
+apiVersion: 1
+providers:
+  - name: redteam
+    orgId: 1
+    folder: redteam
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

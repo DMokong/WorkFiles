@@ -208,6 +208,32 @@
 > doesn't verify the ledger seal before triaging — the injection is neutralised
 > regardless.) Third-party MCP allowlist stays `{atlassian}`.
 
+> **Update 2026-07-02 (later⁵) — build-next #7: OTel exporter + starter Grafana
+> dashboard.** `docker compose -f redteam/runtime/docker-compose.yml --profile
+> dev up` now lights up Grafana with **populated** panels, no manual import. The
+> redteam service sets the (docs-confirmed) Claude Code telemetry env
+> (`CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_METRICS_EXPORTER`/`_LOGS_EXPORTER=otlp`,
+> `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` → the collector on `:4317`); the collector
+> routes **metrics→Prometheus** (`:8889`, scraped) and **traces→Tempo**; and
+> Grafana **auto-provisions** both datasources + the `redteam-engagement`
+> dashboard (six `claude_code_*` metric panels). New `tempo.yaml` /
+> `prometheus.yml` / `grafana/provisioning/*` / dashboard JSON; the old
+> import-only `grafana_dashboard.json` is superseded. Built with contract tests
+> (`tests/test_otel_provisioning.py`) + `docker compose config` validation. A
+> two-agent adversarial pass (wiring + regression) traced every hop for
+> port/name consistency and caught **two real defects**, both fixed: (1) the
+> collector's Prometheus exporter defaults `add_metric_suffixes: true`, which
+> inserts the unit into names (`claude_code_token_usage_tokens_total`, …) and
+> would have left three panels on "No data" — set `add_metric_suffixes: false`
+> and query plain `claude_code_*` names; (2) the Tempo traces panel could never
+> populate (Claude Code traces are beta-gated and the app's `telemetry.py` is a
+> no-op tracer — RT-22), so the dead panel was removed while keeping the Tempo
+> datasource + traces pipeline wired for when trace export lands. Full suite
+> **352 passed, ruff clean**. Noted (not auto-fixed, to preserve the security
+> model): the default-deny egress nft ruleset drops OTLP to the collector in the
+> hardened container — the dev stack needs `REDTEAM_NETPOLICY_OPTIONAL=1` or the
+> collector in `egress_allowlist`.
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9

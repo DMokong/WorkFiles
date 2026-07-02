@@ -183,8 +183,10 @@ ENGAGEMENT=/engagements/example.yaml \
 
 ## What to build next (suggested order)
 
-Since the last revision, **M3 (the `redteam triage` findings pipeline) landed**
-(see Status). The remaining order:
+**Build-next items #1–#7 are all DONE** (this session landed #2 KMS sealer, #4
+recon `gh_*`, #5 Jira upsert, #6 real scanners, #7 OTel/Grafana; #1 signature
+verify and #3 nftables were done earlier). Only the deferred **#8 M3 v-next**
+remains. Each item below is kept for provenance (strikethrough = done):
 
 1. ~~Wire signature verification so an unsigned/bad-signed YAML never reaches
    the orchestrator.~~ **Done:** `redteam run` verifies the detached operator
@@ -246,9 +248,21 @@ Since the last revision, **M3 (the `redteam triage` findings pipeline) landed**
    override) wire it up. Tested in `tests/test_whitebox_scanners.py` (18
    cases) + a two-agent adversarial pass (correctness/totality + regression).
    NB: `semgrep --config auto` needs `semgrep.dev` in `egress_allowlist`.
-7. **OTel exporter — confirm SDK env vars and add a starter dashboard
-   provisioning file** so `docker compose up` lights up Grafana with
-   panels populated.
+7. ~~OTel exporter — confirm SDK env vars and add a starter dashboard
+   provisioning file.~~ **Done:** the redteam service sets the Claude Code
+   telemetry env (`CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_METRICS_EXPORTER`/
+   `OTEL_LOGS_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` → the collector
+   on `:4317`), the collector routes metrics→Prometheus (`:8889`, scraped) and
+   traces→Tempo, and Grafana auto-provisions both datasources + the
+   `redteam-engagement` dashboard (Claude Code `claude_code_*` metric panels).
+   `docker compose -f redteam/runtime/docker-compose.yml --profile dev up`
+   lights it up with no manual import. Metric names use
+   `add_metric_suffixes: false` (plain dots→underscores) so the panel queries
+   match. Contract-tested in `tests/test_otel_provisioning.py`. NB: the
+   default-deny egress nft ruleset drops OTLP to the collector in the hardened
+   container — run the dev stack with `REDTEAM_NETPOLICY_OPTIONAL=1` or add the
+   collector to `egress_allowlist`. (Traces populate once trace export is
+   enabled — Claude Code beta flag or an app TracerProvider, RT-22.)
 8. **M3 v-next (deferred, marked in the spec):** semantic/LLM dedup (v1 dedup is
    deterministic-only), CMDB / environmental CVSS + offensive-priority scoring,
    and multi-backend model routing for `--verify`/`--chain` (v1 uses the single

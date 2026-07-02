@@ -1,0 +1,22 @@
+# Grafana datasource provisioning (auto-loaded at startup by the bundled dev
+# Grafana). Prometheus holds the Claude Code `claude_code_*` metrics (scraped
+# from the collector); Tempo holds the redteam tool-call traces.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 15s
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      # Let a trace jump to the metrics that share its service.
+      tracesToMetrics:
+        datasourceUid: prometheus

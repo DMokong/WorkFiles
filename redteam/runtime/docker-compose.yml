@@ -28,6 +28,18 @@ services:
     # No static `user:` - the entrypoint starts as root, fixes the audit-volume
     # ownership, then drops to the unprivileged redteam user (uid 10001).
     environment:
+      # Claude Code telemetry: the Agent SDK spawns the `claude` CLI, which
+      # reads these at startup and ships metrics + event-logs over OTLP/gRPC to
+      # the collector. (Confirmed against the Claude Code monitoring docs.)
+      # NOTE: the entrypoint's default-deny egress nft ruleset only allows
+      # api.anthropic.com + the engagement's egress_allowlist, so OTLP export to
+      # otel-collector is dropped in the hardened container. For the dev
+      # observability stack to receive data, run with REDTEAM_NETPOLICY_OPTIONAL=1
+      # (dev only) or add the collector to the engagement's egress_allowlist.
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_METRICS_EXPORTER: "otlp"
+      OTEL_LOGS_EXPORTER: "otlp"
+      OTEL_EXPORTER_OTLP_PROTOCOL: "grpc"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
       OTEL_SERVICE_NAME: "redteam"
       REDTEAM_KMS_KEY_ID: "${REDTEAM_KMS_KEY_ID:-}"
@@ -54,24 +66,47 @@ services:
       - "4317:4317"   # OTLP/gRPC
       - "4318:4318"   # OTLP/HTTP
 
-  # Local dev Grafana stack. In production, set CENTRAL_OTLP_ENDPOINT and
-  # disable these services with `--scale tempo=0 --scale grafana=0`.
+  # Local dev observability stack (traces -> Tempo, metrics -> Prometheus,
+  # dashboards -> Grafana). Bring it up with the dev profile:
+  #   docker compose -f redteam/runtime/docker-compose.yml --profile dev up
+  # In production set CENTRAL_OTLP_ENDPOINT and leave the dev profile off.
   tempo:
     image: grafana/tempo:2.5.0
     command: ["-config.file=/etc/tempo.yaml"]
     profiles: [dev]
+    volumes:
+      - ./otel/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    profiles: [dev]
+    depends_on:
+      - otel-collector
+    volumes:
+      - ./otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro
 
   grafana:
     image: grafana/grafana:11.0.0
     profiles: [dev]
+    depends_on:
+      - prometheus
+      - tempo
     ports:
       - "3000:3000"
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+    volumes:
+      # Auto-provisioned datasources (Prometheus + Tempo) + dashboard provider +
+      # the redteam dashboard, so `up` shows populated panels with no import.
+      - ./otel/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./otel/grafana/dashboards:/var/lib/grafana/dashboards:ro
 
 volumes:
   audit:
+  tempo-data:
 
 secrets:
   anthropic_api_key:

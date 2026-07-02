@@ -105,8 +105,12 @@ Engagements are defined as **YAML scope + natural-language objective**.
 │       ├── entrypoint.sh           # mounts audit + assets ro, drops caps, launches redteam
 │       ├── netpolicy.json          # egress allowlist template
 │       └── otel/
-│           ├── collector.yaml      # OTLP receiver → exporter (env-configurable)
-│           └── grafana_dashboard.json
+│           ├── collector.yaml      # OTLP in → traces:Tempo, metrics:Prometheus
+│           ├── tempo.yaml          # dev traces backend
+│           ├── prometheus.yml      # scrapes the collector's :8889 metrics
+│           └── grafana/            # auto-provisioned datasources + dashboard
+│               ├── provisioning/{datasources,dashboards}/*.yaml
+│               └── dashboards/redteam-engagement.json
 ├── engagements/
 │   ├── example.yaml                # sample scoped engagement
 │   └── authorized_signers          # SSH allowed-signers file for ssh-keygen -Y verify

@@ -1,0 +1,12 @@
+# Prometheus scrapes the OTel Collector's Prometheus exporter (:8889), where the
+# Claude Code `claude_code.*` OTLP metrics land as `claude_code_*` (the collector
+# sets add_metric_suffixes: false, so it's a plain dots->underscores of the OTLP
+# name - no unit/_total suffixing). Grafana reads from here.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]

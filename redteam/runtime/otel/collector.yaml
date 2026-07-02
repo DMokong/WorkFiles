@@ -16,11 +16,23 @@ processors:
 
 exporters:
   otlp:
-    # In dev points at the bundled tempo service; in prod point at the
-    # org's central Grafana stack via CENTRAL_OTLP_ENDPOINT.
+    # Traces only. In dev points at the bundled tempo service; in prod point at
+    # the org's central Grafana stack via CENTRAL_OTLP_ENDPOINT.
     endpoint: ${env:OTEL_EXPORTER_OTLP_ENDPOINT:-tempo:4317}
     tls:
       insecure: true
+  prometheus:
+    # Exposes the Claude Code claude_code.* metrics for Prometheus to scrape.
+    # resource_to_telemetry_conversion promotes resource attrs (service.name,
+    # session.id, ...) to metric labels so the dashboard can group by them.
+    # add_metric_suffixes: false keeps names a predictable dots->underscores of
+    # the OTLP name (e.g. claude_code.token.usage -> claude_code_token_usage) -
+    # WITHOUT the default unit/_total suffixing (which would otherwise yield
+    # claude_code_token_usage_tokens_total etc. and silently break the panels).
+    endpoint: 0.0.0.0:8889
+    add_metric_suffixes: false
+    resource_to_telemetry_conversion:
+      enabled: true
   debug:
     verbosity: normal
 
@@ -33,11 +45,15 @@ service:
       receivers: [otlp]
       processors: [batch, attributes/redteam]
       exporters: [otlp, debug]
-    logs:
-      receivers: [otlp]
-      processors: [batch, attributes/redteam]
-      exporters: [otlp, debug]
     metrics:
+      # Metrics go to Prometheus (Tempo is traces-only); the dashboard reads
+      # them there.
       receivers: [otlp]
       processors: [batch, attributes/redteam]
-      exporters: [otlp, debug]
+      exporters: [prometheus, debug]
+    logs:
+      # Claude Code emits events as OTLP logs; keep them on the debug sink for
+      # the starter (a Loki datasource is a documented v-next).
+      receivers: [otlp]
+      processors: [batch, attributes/redteam]
+      exporters: [debug]

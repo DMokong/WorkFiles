@@ -1,0 +1,104 @@
+{
+  "__comment": "Provisioned starter dashboard (build-next #7). Panels populate from Claude Code OTLP metrics scraped off the collector. Metric names are the OTLP names dots->underscores (the collector sets add_metric_suffixes: false, so there is NO unit/_total suffixing): claude_code.token.usage -> claude_code_token_usage, etc. No manual import: the dashboards provider loads this at `docker compose --profile dev up`. Traces flow to the provisioned Tempo datasource once trace export is enabled (Claude Code beta flag, or a TracerProvider in the app - RT-22); explore them in Grafana Explore.",
+  "title": "redteam — engagement live",
+  "uid": "redteam-engagement",
+  "tags": ["redteam"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": {"from": "now-6h", "to": "now"},
+  "templating": {"list": []},
+  "annotations": {"list": []},
+  "panels": [
+    {
+      "id": 1,
+      "title": "Token usage (rate by type)",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum by (type) (rate(claude_code_token_usage[5m]))",
+          "legendFormat": "{{type}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Cost (USD, cumulative)",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 4}, "overrides": []},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum(claude_code_cost_usage)"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Sessions",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum(claude_code_session_count)"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Lines of code changed (by type)",
+      "type": "bargauge",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum by (type) (claude_code_lines_of_code_count)",
+          "legendFormat": "{{type}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Commits",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 8},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum(claude_code_commit_count)"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Active time (s, cumulative)",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 8},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum(claude_code_active_time_total)"
+        }
+      ]
+    }
+  ]
+}
