@@ -45,7 +45,7 @@ def build_pack(ctx: ToolContext):
 
     @tool(
         "network__port_scan",
-        "Stub: lightweight TCP-connect scan of a small port list against an in-scope host.",
+        "Lightweight TCP-connect scan of a small port list against an in-scope host.",
         {
             "type": "object",
             "properties": {

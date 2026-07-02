@@ -1,12 +1,18 @@
 # redteam
 
-Modular security testing harness on the Claude Agent SDK. **This repo is
-a blueprint / seed project**, not a finished product — many module
-bodies are stubs. The schemas, contracts, file layout, and policy spine
-are real; the rest is signposted for the next implementation phase.
+Modular security testing harness on the Claude Agent SDK. **It's functional,
+not a blueprint** — the security / audit / policy spine is real and enforced,
+the container has run a real autonomous engagement end-to-end, and the recon,
+web, network, whitebox, report, and triage flows all work. What's left is
+scoped and tracked: the AWS `cloud` pack and a handful of tools are still stubs,
+plus a set of hardening items — see
+[docs/REMAINING-WORK.md](docs/REMAINING-WORK.md).
 
-The complete design doc is in [docs/PLAN.md](docs/PLAN.md). Orientation
-for any continuing Claude session is in [CLAUDE.md](CLAUDE.md).
+The complete design doc is in [docs/PLAN.md](docs/PLAN.md); orientation and the
+**hard constraints** (for any continuing session, human or AI) are in
+[CLAUDE.md](CLAUDE.md). **New contributor?** Read those two plus
+[docs/REMAINING-WORK.md](docs/REMAINING-WORK.md), then see
+[Continuing this work](#continuing-this-work--contributing).
 
 ## What it is
 
@@ -18,9 +24,10 @@ in a tamper-evident hash-chained ledger.
 
 The four properties the design protects:
 
-- **Observability** — live OTel + structured tool events to a local /
-  central Grafana stack.
-- **Auditability** — KMS-sealed, hash-chained JSONL ledger; standalone
+- **Observability** — the container ships Claude Code OTel metrics to an
+  auto-provisioned Grafana / Prometheus / Tempo dev stack (or a central one);
+  the app's own tool-span events are the next step (RT-22).
+- **Auditability** — AWS KMS-sealed, hash-chained JSONL ledger; standalone
   `redteam-verify` CLI.
 - **Customisability** — per-engagement scope, tools, egress, subagents.
 - **Autonomy** — long unattended runs with budget / turn / per-target
@@ -101,12 +108,29 @@ redteam triage /audit/ENG-ID.jsonl --assets-root ./targets/example-api \
   --verify --chain --min-confidence 7 --out ./triage-out
 ```
 
-`--verify` / `--chain` need a reachable model — an `ANTHROPIC_API_KEY` (or
-Amazon Bedrock / Google Vertex via `CLAUDE_CODE_USE_BEDROCK` / `_VERTEX`), **or**
-a logged-in `claude` CLI. Without any of those the model stages refuse cleanly
-(exit non-zero, no artifacts written) and you can still run the deterministic
-path. Every model-output path degrades rather than crashing, so a garbage or
-truncated reply never breaks the run.
+Additional opt-in stages / flags:
+
+- `--semantic-dedup` — a model pass that merges same-root-cause findings the
+  deterministic `(file, vuln_class)` dedup misses. Conservative: same-file only,
+  and every merge is recorded in the dropped list (auditable, never silently
+  deleted).
+- `--security-requirements CR:H,IR:H,AR:M` — engagement-wide CVSS **environmental**
+  Security Requirements, which feed an **offensive-priority** score (P1–P4)
+  blending environmental CVSS + exploitability + verify verdict + exploit-chain
+  membership (surfaced in the SARIF/markdown/JSON).
+- `--jira-project SEC` — also emit `<ledger>.jira.json`, an idempotent Jira
+  upsert bundle with a deterministic external key so re-runs update tickets in
+  place (the agent/operator applies it via the Atlassian MCP).
+- `--verify-model` / `--chain-model` / `--dedup-model` — route each model stage
+  to a different model id (falling back to `--model`).
+
+`--verify` / `--chain` / `--semantic-dedup` need a reachable model — an
+`ANTHROPIC_API_KEY` (or Amazon Bedrock / Google Vertex via
+`CLAUDE_CODE_USE_BEDROCK` / `_VERTEX`), **or** a logged-in `claude` CLI. Without
+any of those the model stages refuse cleanly (exit non-zero, no artifacts
+written) and you can still run the deterministic path. Every model-output path
+degrades rather than crashing, so a garbage or truncated reply never breaks the
+run.
 
 ## Design constraints (binding for v1)
 
@@ -139,31 +163,81 @@ redteam/                core package
 ├── hooks/              scope_guard, audit_writer, redactor, telemetry
 ├── ledger/             chain + KMS seal + standalone verifier
 ├── tools/              first-party in-process MCP servers
-├── pipeline/           `redteam triage`: prefilter/dedup/enrich + verify/chain
+├── pipeline/           `redteam triage`: prefilter/dedup/enrich (base+env CVSS) +
+│                       verify/chain/semantic-dedup/prioritise + emit
 ├── subagents/          markdown system prompts
+├── jira.py             deterministic Atlassian/Jira idempotency logic
 └── runtime/            Dockerfile, docker-compose, entrypoint, netpolicy, otel/
 
 engagements/            example.yaml + authorized_signers
 targets/                operator clones target repos here via `gh`
-tests/                  contract tests
+tests/                  contract + hardening suite (391 tests)
 docs/PLAN.md            full design doc
-CLAUDE.md               orientation for continuing AI sessions
+docs/REMAINING-WORK.md  consolidated open-items backlog (start here to continue)
+docs/REVIEW.md          dated narrative log of every fix batch
+docs/review-findings.json  structured findings + fix_batches (source of truth)
+CLAUDE.md               orientation + hard constraints for continuing sessions
 ```
 
 ## Status
 
-Maturing blueprint, built cage-first. Real and tested: the schemas, scope
-guard, hash-chained ledger, orchestrator/SDK wiring, the egress netpolicy
-renderer (RT-23), the atomic SARIF report writer (RT-21), and the
-whitebox/web tool bodies. The runtime image now ships Node + the `claude`
-CLI (the Agent SDK's transport), so the container runs a contained
-engagement end-to-end — use `redteam doctor --probe` to confirm readiness,
-and `engagements/whitebox-first.example.yaml` for the first contained run.
-A true *autonomous* run needs a model backend (`ANTHROPIC_API_KEY`, or
-Amazon Bedrock / Google Vertex via `CLAUDE_CODE_USE_BEDROCK` / `_VERTEX`).
-The **M3 `redteam triage` findings pipeline** (prefilter / dedup / CWE+CVSS
-enrich / opt-in adversarial verify + exploit-chain synthesis → refined SARIF +
-markdown + JSON) is implemented and live-verified — see
-[Triage](#triage--refine-an-engagements-findings). Still stubbed and clearly
-marked: the recon/cloud/network tool bodies, the KMS sealer, and the SSH-sig
-parse hook. [CLAUDE.md](CLAUDE.md) lists the suggested next-steps order.
+**Functional, built cage-first — no longer a blueprint.**
+
+Real, tested, and *enforced* — the security / audit spine: the pydantic schema,
+scope guard, hash-chained ledger with **AWS KMS seal**, SSH-signature gating on
+`redteam run`, the egress netpolicy renderer (RT-23), and the atomic SARIF
+writer (RT-21). The runtime image ships Node + the pinned `claude` CLI (the
+Agent SDK's transport), so the container runs a contained engagement end-to-end
+(`redteam doctor --probe` confirms readiness;
+`engagements/whitebox-first.example.yaml` is the first contained run). A **real
+autonomous engagement has run** (on the host `claude` CLI): the agent reviewed a
+planted-vulnerable backend, the cage denied/allowed tools live, and 6 correct
+findings sealed into the ledger and passed `redteam-verify`.
+
+Working tool packs: **recon** (DNS + `gh_*` GitHub search), **web** (HTTP with
+method-allowlist + no-redirect), **network** (async TCP connect / port scan),
+**whitebox** (repo read/grep + real **semgrep / tfsec / checkov**), **report**
+(SARIF + idempotent Jira upsert). The **M3 `redteam triage` pipeline** —
+prefilter / dedup / CWE + CVSS (base **and** environmental) enrich / opt-in
+adversarial verify + exploit-chain synthesis + semantic dedup + offensive
+priority + per-stage model routing → refined SARIF + markdown + JSON — is
+implemented; its core is live-verified (the v-next stages — semantic dedup,
+environmental scoring, model routing — are mock/contract-tested). See
+[Triage](#triage--refine-an-engagements-findings).
+
+Still stubbed or pending (all tracked in
+[docs/REMAINING-WORK.md](docs/REMAINING-WORK.md)):
+
+- the **`cloud` pack** (AWS `list_buckets` / `describe_iam`) — the only
+  fully-stubbed pack;
+- individual tools: `whois`, `cert_transparency` (recon); `sbom_query`,
+  `openapi_diff`, `dependency_audit` (whitebox);
+- the app's own OTel tracer + tool-span events (RT-22);
+- the fully-hardened *container* autonomous run (secret→env, asset-mount,
+  backend-egress wiring — the proven autonomous run used the host CLI);
+- open hardening findings (RT-16/17/18/20/24/25/26, …) and the "not yet
+  exercised against live AWS / Jira / Grafana" verification gaps.
+
+## Continuing this work / contributing
+
+Built to be picked up by anyone — a later session or a new contributor.
+
+- **[docs/REMAINING-WORK.md](docs/REMAINING-WORK.md)** — the consolidated
+  backlog: what's open, why, where to start, and a suggested order.
+- **[docs/review-findings.json](docs/review-findings.json)** — the structured
+  source of truth (every finding + the `fix_batches` history, each with a
+  per-batch `residual`).
+- **[CLAUDE.md](CLAUDE.md)** — orientation + the **hard constraints** that must
+  not be relaxed without a deliberate decision (see [Design constraints](#design-constraints-binding-for-v1)).
+
+The working cadence — please keep it: **TDD** (write the failing test first),
+then an **adversarial review pass** before merging, then update the docs
+(`review-findings.json` + `REVIEW.md`) and commit. Don't broaden the scope-guard
+defaults or tool allowlists "to make things work" — the defence-in-depth model
+(**the hook is the gate, the tool is the lock**) is load-bearing.
+
+```bash
+pip install -e ".[dev]"
+pytest                       # contract + hardening suite (391 passing)
+ruff check redteam tests
+```
