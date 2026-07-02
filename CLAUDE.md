@@ -273,11 +273,21 @@ remains. Each item below is kept for provenance (strikethrough = done):
      `redteam triage --security-requirements CR:H,IR:H`; surfaced in SARIF
      props, the markdown Priority/Env columns, and `triage.json`. Tested in
      `tests/test_m3_cvss.py` + `tests/test_m3_priority.py`.
-   - **Still deferred:** semantic/LLM dedup (v1 dedup is deterministic-only);
-     multi-backend model routing for `--verify`/`--chain` (v1 uses the single
-     engagement backend); CMDB-sourced per-asset environmental inputs (v1 takes
-     engagement-wide Security Requirements from the `--security-requirements`
-     flag, not a CMDB).
+   - ~~semantic/LLM dedup~~ **Done:** opt-in `stages.semantic_dedup_findings`
+     (`redteam triage --semantic-dedup`, gated on `model_stage_ready`) runs a
+     model pass on the deterministic survivors to merge same-root-cause
+     findings the `(file, vuln_class)` dedup misses. Conservative by design —
+     the danger is a false-negative (a merged finding vanishing): a duplicate
+     must share the canonical's file, indices are validated in-range + disjoint,
+     every merge is recorded in `report.dropped` (auditable/recoverable), and a
+     bad/unparseable/errored reply degrades (keeps everything). Total (hardened
+     against a >4300-digit index crash). Tested in
+     `tests/test_m3_semantic_dedup.py`.
+   - **Still deferred:** multi-backend model routing for
+     `--verify`/`--chain`/`--semantic-dedup` (v1 uses the single engagement
+     backend); CMDB-sourced per-asset environmental inputs (v1 takes
+     engagement-wide Security Requirements from `--security-requirements`, not a
+     CMDB).
 
 ## What NOT to do
 

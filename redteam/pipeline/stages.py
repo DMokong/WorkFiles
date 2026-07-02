@@ -367,6 +367,158 @@ async def verify_findings(
     return kept, dropped, degraded
 
 
+# --- semantic dedup (opt-in LLM) --------------------------------------------
+
+_SEMANTIC_SYSTEM = (
+    "You are deduplicating security findings. You have NO tools: reason ONLY "
+    "from the numbered findings in the message. Group findings that describe the "
+    "SAME underlying vulnerability (same root cause) even if worded or classified "
+    "differently. Be CONSERVATIVE: only group findings you are confident are the "
+    "same issue at the same place; when in doubt, do NOT group. Findings in "
+    "different files are almost never the same issue.\n\n"
+    "Reply with ONLY a JSON array (no prose). Each element groups one canonical "
+    "finding with its duplicates:\n"
+    '{"canonical": index, "duplicates": [index, ...], "reason": str}\n'
+    "Every index appears in at most one group; a group has >=1 duplicate. If "
+    "nothing is a duplicate, reply with []."
+)
+
+_MAX_SEMANTIC_REASON = 300
+
+
+def _as_index(v: object) -> int | None:
+    """Coerce a JSON value to an int index, or None (not bool).
+
+    A quoted index is length-capped (an index into a findings list never needs
+    more than a few digits) so an adversarial >4300-digit string can't raise on
+    ``int()`` (Py3.14 caps int-from-str) — the same trap models.py guards with
+    ``\\d{1,9}``."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        body = v.strip().lstrip("-")
+        if body.isdigit() and len(body) <= 9:
+            return int(v)
+    return None
+
+
+def _finding_file(f: Finding) -> str | None:
+    parsed = f.parsed_location()
+    return parsed[0] if parsed else None
+
+
+def _dedup_groups(
+    items: list, findings: list[Finding]
+) -> list[tuple[int, list[int], str]]:
+    """Validate model groups into ``[(canonical, [dup, ...], reason)]``.
+
+    Deterministic guards (independent of the model): indices in range; each index
+    used in at most one accepted group; a duplicate must share the canonical's
+    file (a cross-file 'duplicate' is refused — that is almost always two
+    distinct findings, and wrongly merging them loses a real one)."""
+    n = len(findings)
+    claimed: set[int] = set()
+    groups: list[tuple[int, list[int], str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        canonical = _as_index(item.get("canonical"))
+        if canonical is None or not (0 <= canonical < n) or canonical in claimed:
+            continue
+        canon_file = _finding_file(findings[canonical])
+        if canon_file is None:  # no location to guardrail on -> skip (conservative)
+            continue
+        raw_dups = item.get("duplicates")
+        if not isinstance(raw_dups, list):
+            continue
+        valid: list[int] = []
+        for rd in raw_dups:
+            d = _as_index(rd)
+            if d is None or not (0 <= d < n) or d == canonical or d in claimed or d in valid:
+                continue
+            if _finding_file(findings[d]) != canon_file:  # same-file guardrail
+                continue
+            valid.append(d)
+        if not valid:
+            continue
+        reason = str(item.get("reason", "")).strip()[:_MAX_SEMANTIC_REASON]
+        groups.append((canonical, valid, reason))
+        claimed.add(canonical)
+        claimed.update(valid)
+    return groups
+
+
+def _semantic_user_prompt(findings: list[Finding]) -> str:
+    blocks = []
+    for i, f in enumerate(findings):
+        loc = f.location or "unknown"
+        desc = (f.description or "").strip().replace("\n", " ")[:200]
+        blocks.append(f"[{i}] {f.derived_vuln_class()} @ {loc} — {f.title} ({f.severity}) :: {desc}")
+    return "Findings:\n" + "\n".join(blocks) + "\n"
+
+
+async def semantic_dedup_findings(
+    findings: list[Finding], *, ask: AskFn, model: str | None = None
+) -> tuple[list[Finding], list[DroppedFinding], bool]:
+    """Model-assisted dedup on top of the deterministic pass. Total + conservative.
+
+    Returns ``(kept, dropped, degraded)`` — kept preserves reading order; each
+    merged duplicate is recorded in ``dropped`` as ``DUPLICATE`` with a
+    ``semantic duplicate of ...`` detail (auditable, recoverable). ``degraded`` is
+    True only when the model call failed or its reply had no extractable JSON
+    payload (a valid reply with zero groups is NOT degraded)."""
+    if len(findings) < 2:
+        return list(findings), [], False
+    try:
+        reply = await ask(_SEMANTIC_SYSTEM, _semantic_user_prompt(findings), model=model)
+    except Exception:  # noqa: BLE001 - a failure degrades to no merges
+        return list(findings), [], True
+
+    groups: list[tuple[int, list[int], str]] = []
+    saw_payload = False
+    for data in _iter_json_values(reply):
+        # Accept a JSON array of groups, a {"groups": [...]} wrapper, or a bare
+        # single group object (parity with the chain stage's leniency).
+        if isinstance(data, dict):
+            items = data.get("groups")
+            if not isinstance(items, list):
+                items = [data]
+        elif isinstance(data, list):
+            items = data
+        else:
+            continue
+        saw_payload = True
+        try:
+            groups = _dedup_groups(items, findings)
+        except Exception:  # noqa: BLE001 - a hostile payload must never crash the stage
+            groups = []
+        if groups:
+            break
+
+    if not groups:
+        return list(findings), [], not saw_payload
+
+    dropped: list[DroppedFinding] = []
+    to_drop: set[int] = set()
+    for canonical, dups, reason in groups:
+        canon = findings[canonical]
+        for d in dups:
+            df = findings[d]
+            parsed = df.parsed_location()
+            if parsed:
+                canon.duplicates.append(DupLocation(file=parsed[0], line=parsed[1]))
+            detail = f"semantic duplicate of {canon.title!r}"
+            if reason:
+                detail += f": {reason}"
+            dropped.append(_drop(df, "DUPLICATE", detail))
+            to_drop.add(d)
+
+    kept = [f for i, f in enumerate(findings) if i not in to_drop]
+    return kept, dropped, False
+
+
 # --- chain (opt-in LLM, VVAH S8) --------------------------------------------
 
 _SEVERITY_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
@@ -522,19 +674,22 @@ def run_triage(
     line_tolerance: int = _DEFAULT_LINE_TOLERANCE,
     verify: bool = False,
     chain: bool = False,
+    semantic_dedup: bool = False,
     min_confidence: int = 7,
     security_requirements: dict[str, str] | None = None,
     ask: AskFn | None = None,
     model: str | None = None,
 ) -> TriageReport:
-    """Triage: prefilter -> dedup -> [verify] -> enrich -> [chain] -> prioritise -> report.
+    """Triage: prefilter -> dedup -> [semantic dedup] -> [verify] -> enrich ->
+    [chain] -> prioritise -> report.
 
-    The deterministic core is credential-free and total. The opt-in ``verify``
-    and ``chain`` stages use ``ask`` (defaulting to the ``llm.ask`` seam,
-    resolved lazily so tests can inject/patch it) and are driven synchronously
-    here via ``asyncio.run`` — a per-stage failure degrades, never crashes.
+    The deterministic core is credential-free and total. The opt-in ``verify``,
+    ``chain`` and ``semantic_dedup`` stages use ``ask`` (defaulting to the
+    ``llm.ask`` seam, resolved lazily so tests can inject/patch it) and are driven
+    synchronously here via ``asyncio.run`` — a per-stage failure degrades, never
+    crashes.
     """
-    if (verify or chain) and ask is None:
+    if (verify or chain or semantic_dedup) and ask is None:
         from . import llm
 
         ask = llm.ask
@@ -553,6 +708,21 @@ def run_triage(
     timings["dedup_ms"] = (time.perf_counter() - t0) * 1000
 
     dropped = pre_dropped + dup_dropped
+
+    # Opt-in semantic dedup: runs on the deterministic survivors (before verify,
+    # so verify never spends a call on a semantic duplicate). Conservative +
+    # total; a degraded stage keeps every finding.
+    if semantic_dedup:
+        t0 = time.perf_counter()
+        canonical, sem_dropped, sem_degraded = asyncio.run(
+            semantic_dedup_findings(canonical, ask=ask, model=model)
+        )
+        timings["semantic_dedup_ms"] = (time.perf_counter() - t0) * 1000
+        dropped += sem_dropped
+        if sem_degraded:
+            degraded = True
+            degraded_reasons.append("semantic dedup produced no parseable result")
+
     verified_total = 0
     confirmed_tp = 0
 

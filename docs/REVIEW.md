@@ -259,6 +259,27 @@
 > clean**. Still deferred (#8): semantic/LLM dedup, multi-backend
 > `--verify`/`--chain` routing, per-asset CMDB environmental inputs.
 
+> **Update 2026-07-02 (later⁷) — build-next #8 (part 2): semantic/LLM dedup.**
+> Opt-in `stages.semantic_dedup_findings` (`redteam triage --semantic-dedup`,
+> gated on `model_stage_ready`) runs a model pass over the deterministic
+> survivors to merge same-root-cause findings the `(file, vuln_class)` dedup
+> misses (reworded / reclassified / just outside the line tolerance). The design
+> is dominated by one risk — a **false negative**, where wrongly merging two
+> distinct findings makes a real vuln vanish — so it is conservative by
+> construction: a duplicate must **share the canonical's file**, indices are
+> validated in-range + **disjoint**, every merge is **recorded** in
+> `report.dropped` (auditable/recoverable, never silently deleted), and a
+> bad/unparseable/errored reply **degrades** (keeps everything). Built TDD; a
+> two-agent adversarial pass verified all four safeguards hold by tracing + a
+> live battery, and caught **one confirmed high-severity totality bug**: `_as_index`
+> ran `int()` on a quoted index with no digit cap, so a model reply with a
+> >4300-digit string index crashed `run_triage` (Py3.14's int-from-str limit) —
+> the exact trap `models.py` already guards with `\d{1,9}`. Fixed by capping the
+> quoted-index length + a defensive parse wrapper; also accepted a bare
+> single-group object for parity with the chain stage. Full suite **386 passed,
+> ruff clean**; the default (no-flag) path is byte-for-byte unchanged. Remaining
+> #8: multi-backend model routing, per-asset CMDB environmental inputs.
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9

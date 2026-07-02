@@ -298,6 +298,13 @@ def _parse_security_requirements(spec: str) -> dict[str, str]:
     "needs a backend or a logged-in claude CLI).",
 )
 @click.option(
+    "--semantic-dedup",
+    is_flag=True,
+    help="Model-assisted dedup on top of the deterministic pass (opt-in; needs "
+    "a backend or a logged-in claude CLI). Conservative: same-file only, every "
+    "merge recorded in the dropped list.",
+)
+@click.option(
     "--min-confidence",
     type=click.IntRange(0, 10),
     default=7,
@@ -323,6 +330,7 @@ def triage(
     out: Path | None,
     verify: bool,
     chain: bool,
+    semantic_dedup: bool,
     min_confidence: int,
     model: str | None,
     security_requirements: str | None,
@@ -360,11 +368,11 @@ def triage(
     # Gate the model stages on a reachable model, mirroring the `run` path:
     # refuse cleanly (no traceback, no artifacts written) only when there is
     # neither an env backend nor a claude CLI to authenticate through.
-    if verify or chain:
+    if verify or chain or semantic_dedup:
         ready, detail = preflight.model_stage_ready(os.environ)
         if not ready:
             click.echo(
-                "REFUSED: --verify/--chain need a reachable model "
+                "REFUSED: --verify/--chain/--semantic-dedup need a reachable model "
                 f"({detail}). Set ANTHROPIC_API_KEY or a "
                 "CLAUDE_CODE_USE_BEDROCK/VERTEX backend, log in the claude CLI, "
                 "or drop the flags to run the deterministic stages only.",
@@ -381,6 +389,7 @@ def triage(
             assets_root=assets_root.resolve() if assets_root else None,
             verify=verify,
             chain=chain,
+            semantic_dedup=semantic_dedup,
             min_confidence=min_confidence,
             security_requirements=reqs,
             model=model,
