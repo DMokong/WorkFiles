@@ -295,6 +295,26 @@
 > clean**. The only remaining roadmap item is CMDB-sourced per-asset
 > environmental inputs (needs a real CMDB; out of scope).
 
+> **Update 2026-07-03 — RT-16: Dockerfile scanner supply-chain hardening.**
+> Picking up the open-findings backlog. The runtime image built the whitebox
+> scanners insecurely: `pip install semgrep>=1.70 checkov>=3.2` was **unquoted**,
+> so the shell parsed `>=1.70`/`>=3.2` as output redirections and **silently
+> dropped the version pins** (installing unverified `latest` + junk files);
+> tfsec/kube-linter came from `releases/latest` with **no checksum**; awscli was
+> installed unverified; and the base image floated. Now: the base is
+> **digest-pinned**, the pip specs are **quoted + exact-pinned**
+> (`semgrep==1.168.0`, `checkov==3.3.6`), **awscli** (2.35.14) and **tfsec**
+> (v1.28.14) are version-pinned and **SHA256-verified**, and **kube-linter is
+> removed** (it was unused — the IaC scan uses tfsec for terraform + checkov for
+> kubernetes). Every install has a `--version` smoke-check. All hashes were
+> cross-checked against the live PyPI / GitHub-release-checksums / AWS sources,
+> and the base-digest + awscli/tfsec **checksum-install layers were live-built**
+> (`docker build --platform linux/amd64`): both checksums verified (`OK`) and
+> both binaries ran. Contract-tested in `tests/test_dockerfile_rt16.py`; full
+> suite **397 passed, ruff clean**. (The heavy node/npm/pip layers weren't
+> rebuilt to completion under arm64→amd64 emulation — see
+> `docs/REMAINING-WORK.md` §C.)
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9

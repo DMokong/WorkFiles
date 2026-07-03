@@ -310,7 +310,7 @@ Starter packs:
   by `scope.targets` CIDRs.
 - **whitebox** — operates over the read-only `assets:` mount. Provides
   `repo_grep`, `repo_read`, `semgrep_scan`, `dependency_audit`,
-  `iac_scan` (tfsec / checkov / kube-linter), `openapi_diff`,
+  `iac_scan` (tfsec for terraform, checkov for kubernetes), `openapi_diff`,
   `sbom_query`. The mount is populated *before* the engagement starts
   by the operator running `gh repo clone` / `gh repo sync` into
   `./targets/` — see "Asset fetch workflow" below.
@@ -376,7 +376,7 @@ ledger.
 
 - Base: `python:3.12-slim`.
 - Bundled tooling in the image: `gh` CLI, `nmap` (scope-bound),
-  `semgrep`, `tfsec`, `checkov`, `kube-linter`, `awscli` v2.
+  `semgrep`, `tfsec`, `checkov`, `awscli` v2.
 - Orchestration: **docker compose**. One compose project per engagement;
   spins up the harness container, a local OTel collector, and (in dev)
   the local Grafana stack.
@@ -577,7 +577,7 @@ End-to-end test plan once Phase 2 is in:
 - `redteam/tools/report.py` — SARIF writer + idempotent Jira upsert
   via Atlassian MCP.
 - `redteam/runtime/Dockerfile` — image with `gh`, `awscli`, semgrep,
-  tfsec, checkov, kube-linter.
+  tfsec, checkov.
 - `redteam/runtime/docker-compose.yml` — harness + OTel collector + dev
   Grafana stack.
 - `redteam/runtime/entrypoint.sh` + `netpolicy.json` — blast-radius

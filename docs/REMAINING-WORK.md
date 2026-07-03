@@ -53,10 +53,21 @@ moved it but left work.
   (v1 is AWS-only). *Fix:* add the cloud tools to `_TARGETLESS_TOOLS` (and
   scope-check ARNs inside the tool) or give them a target-bearing key; restrict
   the enum to `aws`. (`redteam/tools/cloud.py`, `redteam/hooks/scope_guard.py`.)
-- **RT-16 — Dockerfile scanner pins dropped; unpinned `latest`; no checksums.**
-  Now **more urgent** because build-next #6 made semgrep/tfsec/checkov real —
-  the runtime image must actually install them, pinned + checksum/signature
-  verified, and digest-pin the base image. (`redteam/runtime/Dockerfile`.)
+- ~~**RT-16 — Dockerfile scanner pins dropped; unpinned `latest`; no
+  checksums.**~~ **DONE:** base image digest-pinned; pip scanner specs quoted +
+  exact-pinned (fixes the `>=`-as-redirection bug); awscli + tfsec version-pinned
+  and SHA256-verified; kube-linter removed (unused); per-install `--version`
+  smoke-checks. Contract-tested (`tests/test_dockerfile_rt16.py`); the
+  base-digest + awscli/tfsec checksum-install layers were live-built
+  (linux/amd64).
+- **RT-16-followup — NodeSource `curl … | bash` is unverified RCE.** Flagged by
+  the RT-16 review (out of RT-16's scanner scope): `Dockerfile:~35` runs
+  `curl -fsSL https://deb.nodesource.com/setup_20.x | bash -` — the *nodejs apt
+  package* it configures is GPG-verified, but the setup script piped to bash is
+  not. *Fix:* set up the NodeSource apt repo + keyring manually (pinned) instead
+  of piping the script. Lower-priority follow-ups: `@anthropic-ai/claude-code`
+  has no npm integrity hash/lockfile; apt packages (gh/nmap/…) float on the
+  distro. (`redteam/runtime/Dockerfile`.)
 - **RT-17 — no locking on ledger/budget; blocking I/O in async hooks (latent).**
   `report.py` got an `asyncio.Lock` for the SARIF write (RT-21), but the ledger
   `append()` and budget mutation are still unlocked, and hook bodies do blocking
@@ -141,9 +152,12 @@ runs cost credits). A future workspace with the right access should confirm:
   by injected-`ask` spies; a live model run would re-confirm end-to-end (the M3
   live run earlier hit precision 1.0 + 3 chains, but the v-next stages weren't
   re-run live).
-- **Container-side #6.** the whitebox scanners are subprocess-tested with mocks;
-  they need semgrep/tfsec/checkov actually installed in the image (see RT-16),
-  and `semgrep --config auto` needs `semgrep.dev` in `egress_allowlist`.
+- **Container-side #6.** semgrep / tfsec / checkov are now installed, pinned, and
+  checksum-verified in the image (RT-16 done); the base-digest + awscli/tfsec
+  checksum-install layers were live-built (linux/amd64). Remaining: a **full**
+  image build (the heavy node/npm/pip layers weren't rebuilt to completion here
+  under arm64→amd64 emulation) and a live whitebox run where the scanners scan a
+  real repo. `semgrep --config auto` needs `semgrep.dev` in `egress_allowlist`.
 
 ---
 
@@ -154,7 +168,8 @@ purpose:
 - **recon:** `whois` (needs the `whois` binary), `cert_transparency` (needs
   crt.sh egress).
 - **whitebox:** `sbom_query`, `openapi_diff`, `dependency_audit`.
-- **web / cloud / network packs:** most tool bodies are MCP-shaped stubs.
+- **cloud pack:** `list_buckets` / `describe_iam` (the only fully-stubbed pack;
+  `web` and `network` are real). Ties to RT-11.
 - **Third-party MCP allowlist stays `{atlassian}`** and **GitHub stays on the
   `gh` CLI** — both are deliberate; changing them is a user decision (CLAUDE.md).
 
@@ -162,8 +177,8 @@ purpose:
 
 ## E. Suggested pickup order
 
-1. **RT-16 + container-side #6** — make the scanners real *in the image* (they're
-   real in code now); this unblocks a live whitebox run.
+1. ~~RT-16 + container-side #6~~ **DONE** — scanners are pinned + checksum-verified
+   in the image; next is a full-image build + a live whitebox run (see §C).
 2. **RT-22 app tracer** — a real `TracerProvider` so the app's own spans/events
    populate Tempo (completes the #7 observability story).
 3. **RT-17 / RT-20 / RT-26** — the ledger/budget/error-handling hardening cluster.

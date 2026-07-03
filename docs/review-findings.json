@@ -126,6 +126,14 @@
         "scope": "redteam/pipeline/llm.py: resolve_model(models, stage, default) - a non-empty per-stage override wins, else the --model default (pure, testable). redteam/pipeline/stages.py: run_triage gains a keyword-only `models` dict; verify/chain/semantic-dedup each resolve their model via resolve_model at the ask call. redteam/cli.py: --verify-model / --chain-model / --dedup-model flags build a {stage: model} dict (falsy dropped) passed alongside --model.",
         "design_note": "The Agent SDK one-shot query() reads the backend (ANTHROPIC_API_KEY / CLAUDE_CODE_USE_BEDROCK|VERTEX) from the process env, not per-call, so per-stage PROVIDER switching isn't cleanly expressible through this seam; per-stage MODEL-id routing is (a Bedrock/Vertex model id still routes there via the ambient backend). So 'multi-backend routing' here means per-stage model id, documented as such. This closes the last self-contained #8 item.",
         "residual": "The only remaining roadmap item is CMDB-sourced per-asset environmental CVSS inputs, which needs a real CMDB integration and is out of scope here (v1 uses engagement-wide --security-requirements). Model routing not exercised live (tests use a spy ask; a live run would spend credits)."
+      },
+      {
+        "batch": "RT-16: Dockerfile scanner supply-chain hardening + container-side scanners",
+        "date": "2026-07-03",
+        "tests": "tests/test_dockerfile_rt16.py (6 contract cases: base digest-pinned; no releases/latest or floating awscli zip; pip specs quoted + exact-pinned with no unquoted `>=`; awscli+tfsec SHA256-verified; kube-linter not installed; the 3 whitebox scanners present with --version smoke-checks). Full suite 397 passed; ruff clean.",
+        "verification": "LIVE build (docker build --platform linux/amd64) of the RT-16-critical layers using the EXACT Dockerfile commands: the pinned base digest sha256:423ed6ab... resolved+pulled; awscli 2.35.14 zip SHA256 verified ('/tmp/awscli.zip: OK') + installed + `aws --version` = aws-cli/2.35.14; tfsec v1.28.14 tarball SHA256 verified ('/tmp/tfsec.tgz: OK') + extracted + `tfsec --version` = v1.28.14. All checksums/hashes were cross-checked against the live PyPI/GitHub/AWS sources before pinning (semgrep 1.168.0, checkov 3.3.6 exist on PyPI; tfsec hash matches the release's published checksums file; awscli hash computed from the exact versioned zip).",
+        "scope": "redteam/runtime/Dockerfile: (1) digest-pin the base (python:3.12-slim@sha256:423ed6ab...); (2) FIX the RT-16 redirection bug \u2014 `pip install semgrep>=1.70 checkov>=3.2` was UNQUOTED so the shell parsed `>=1.70`/`>=3.2` as output redirections, silently dropping the pins and installing unverified latest + junk files; now `\"semgrep==1.168.0\" \"checkov==3.3.6\"` (quoted, exact) + `--version` smoke-checks; (3) awscli pinned to 2.35.14 + SHA256-verified (AWS ships no checksums file, so the exact versioned zip's hash is pinned); (4) tfsec pinned to v1.28.14 + SHA256-verified from the release's published checksums (download the tarball, sha256sum -c, extract the `tfsec` binary \u2014 the old build pulled the bare binary from releases/latest with no verification); (5) removed kube-linter (installed from releases/latest, unverified, and unused by any tool pack \u2014 the whitebox IaC scan uses tfsec for terraform + checkov for kubernetes). Version/hash values are ARGs so a bump is a one-line --build-arg. New contract test tests/test_dockerfile_rt16.py.",
+        "residual": "The FULL image build (the heavy node/npm/@anthropic-ai/claude-code + pip semgrep/checkov + `pip install -e .` layers, all unchanged by RT-16) was not rebuilt to completion here \u2014 arm64->amd64 QEMU emulation makes those layers very slow; the RT-16-critical download/checksum/install layers were live-built and pass. A live whitebox run (scanners scanning a real repo end-to-end) is the next verification. semgrep --config auto still needs semgrep.dev in egress_allowlist (documented). Bump the pinned versions/digest periodically."
       }
     ]
   },
@@ -361,13 +369,14 @@
       "title": "Dockerfile drops scanner version pins via unquoted shell redirection; unpinned 'latest' binaries; no checksums",
       "severity": "medium",
       "kind": "supply-chain",
-      "status": "confirmed",
+      "status": "FIXED (verified) \u2014 confirmed",
       "files": [
         "redteam/runtime/Dockerfile:1,26-41"
       ],
       "evidence": "'pip install --no-cache-dir semgrep>=1.70 checkov>=3.2' is unquoted; the shell parses >=1.70 / >=3.2 as output redirections, so pip installs UNPINNED semgrep/checkov and writes junk files (=1.70/=3.2). tfsec and kube-linter pull releases/latest/download with no checksum/signature; the awscli zip is installed without GPG verification; base python:3.12-slim is not digest-pinned.",
       "repro": "Build the image; observe stray files and that the semgrep/checkov floors were ignored.",
-      "fix": "Quote version specs ('semgrep>=1.70'); pin exact versions + verify checksums/signatures for tfsec/kube-linter/awscli; digest-pin the base image."
+      "fix": "Quote version specs ('semgrep>=1.70'); pin exact versions + verify checksums/signatures for tfsec/kube-linter/awscli; digest-pin the base image.",
+      "resolution": "Base image digest-pinned (python:3.12-slim@sha256:423ed6ab...); pip scanner specs QUOTED + exact-pinned (semgrep==1.168.0, checkov==3.3.6) so the shell no longer parses `>=` as a redirection that dropped the pin; awscli pinned to 2.35.14 + SHA256-verified; tfsec pinned to v1.28.14 + SHA256-verified from the release's published checksums (tarball extract); kube-linter removed (unused). Each install has a `--version` smoke-check. Contract-tested in tests/test_dockerfile_rt16.py; the base-digest + awscli/tfsec checksum+install layers were live-built (linux/amd64)."
     },
     {
       "id": "RT-17",
