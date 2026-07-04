@@ -4,14 +4,19 @@ Orientation for any Claude session continuing this project.
 
 ## What this repo is
 
-A **seed / blueprint** for a modular security testing harness built on
-the Claude Agent SDK. It is intentionally not yet functional end-to-end:
-the schemas, contracts, file layout, and policy spine are real; many
-tool-pack bodies and the runtime wiring are stubs marked clearly.
+A **functional** modular security testing harness on the Claude Agent SDK —
+no longer a blueprint. The security/audit/policy spine is real and enforced,
+the container has run a real autonomous engagement end-to-end, and the recon /
+web / network / whitebox / report / triage flows all work. What's left is
+scoped: the AWS `cloud` pack + a few tools are still stubs, plus a set of
+hardening findings.
 
-The full design lives in `docs/PLAN.md`. **Read it before making
-non-trivial changes** — most apparent omissions are deliberate v1 scope
-cuts, not gaps.
+**→ Continuing this project? Start with `docs/REMAINING-WORK.md`** — the
+consolidated backlog (open items, where to start, suggested order). The
+structured source of truth is `docs/review-findings.json` (findings +
+`fix_batches`); `docs/REVIEW.md` is the dated narrative log; the full design is
+in `docs/PLAN.md` (read it before non-trivial changes — most apparent omissions
+are deliberate v1 scope cuts, not gaps).
 
 ## Hard constraints (do not relax without an explicit user request)
 
@@ -115,16 +120,16 @@ docs/review-findings.json  structured findings + fix_batches (source of truth)
   hardened it. See `docs/superpowers/specs/2026-07-02-m3-findings-pipeline-design.md`
   and the M3 batch in `docs/review-findings.json`.
 
-**Stubbed / blueprint-only (clearly marked):**
-- `redteam/tools/{web,cloud,network,report}.py` — MCP-shaped but most tool
-  bodies return `not_implemented` (report is real). In `whitebox.py`,
-  `repo_read` / `repo_grep` / `list_assets` and now `semgrep_scan` / `iac_scan`
-  are **real** (build-next #6 — see `redteam/tools/_scanners.py`); `sbom_query`
-  / `openapi_diff` / `dependency_audit` remain stubs. In `recon.py`, the `gh_*`
-  tools are **real** (build-next #4): read-only, org-scoped `gh` CLI wrappers
-  (`gh_search_code` / `gh_search_repos` / `gh_repo_view`), argv-not-shell,
-  input-validated, total; `whois` / `cert_transparency` remain stubs.
-  Tested in `tests/test_recon_gh.py` + `tests/test_whitebox_scanners.py`
+**Remaining stubs (clearly marked; see `docs/REMAINING-WORK.md` §D):**
+- **`redteam/tools/cloud.py` is the only fully-stubbed pack** (`list_buckets` /
+  `describe_iam` → `not_implemented`; AWS enum — ties to RT-11). `web.py`
+  (HTTP + header inspect) and `network.py` (TCP connect / port scan) are
+  **real**, as are `recon.py` (DNS + `gh_*` GitHub search) and `report.py`
+  (SARIF + Jira upsert).
+- Individual tool stubs: `whois` / `cert_transparency` (recon); `sbom_query` /
+  `openapi_diff` / `dependency_audit` (whitebox). The whitebox scanners
+  (`semgrep` / `tfsec` / `checkov` via `_scanners.py`) and `repo_read/grep` are
+  real. Tested in `tests/test_recon_gh.py` + `tests/test_whitebox_scanners.py`.
 - `redteam/runtime/docker-compose.yml` — references `.secrets/` files
   (`anthropic_api_key`, `gh_token`) that do not exist; create them before
   bringing the stack up. `atlassian_token` is opt-in via the
@@ -188,8 +193,11 @@ ENGAGEMENT=/engagements/example.yaml \
 
 > **Picking this up later / elsewhere?** `docs/REMAINING-WORK.md` is the
 > consolidated backlog — the one remaining roadmap feature (CMDB inputs), the
-> open review findings (`RT-11/16/17/18/20/22/24/25/26` + low/nit), and the
-> live/deploy verification gaps, each with where-to-start pointers.
+> open review findings (**still open: `RT-11/17/18/20/24/25/26` + low/nit**;
+> `RT-16` scanner supply-chain and `RT-22` app tracer were fixed most
+> recently), and the live/deploy verification gaps, each with where-to-start
+> pointers. **Next suggested: the RT-17 / RT-20 / RT-26 hardening cluster**
+> (ledger/budget locking + budget semantics + thin error handling).
 
 **The roadmap is essentially complete.** #1–#7 are all DONE (this session
 landed #2 KMS sealer, #4 recon `gh_*`, #5 Jira upsert, #6 real scanners, #7
