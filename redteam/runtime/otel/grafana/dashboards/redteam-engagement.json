@@ -99,6 +99,22 @@
           "expr": "sum(claude_code_active_time_total)"
         }
       ]
+    },
+    {
+      "id": 7,
+      "title": "redteam harness spans (tool.invoked / tool.denied / finding.recorded)",
+      "type": "table",
+      "datasource": {"type": "tempo", "uid": "tempo"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "tempo", "uid": "tempo"},
+          "queryType": "traceql",
+          "query": "{ resource.service.name =~ \"redteam.*\" }",
+          "limit": 50
+        }
+      ]
     }
   ]
 }

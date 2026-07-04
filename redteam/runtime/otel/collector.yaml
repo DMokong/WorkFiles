@@ -20,7 +20,10 @@ exporters:
     # the org's central Grafana stack via CENTRAL_OTLP_ENDPOINT.
     endpoint: ${env:OTEL_EXPORTER_OTLP_ENDPOINT:-tempo:4317}
     tls:
-      insecure: true
+      # Secure by DEFAULT (matters when CENTRAL_OTLP_ENDPOINT points at the
+      # org's TLS backend in prod). The dev compose sets this true for the
+      # plaintext local tempo. RT-22: don't ship `insecure: true` unconditionally.
+      insecure: ${env:REDTEAM_OTLP_TLS_INSECURE:-false}
   prometheus:
     # Exposes the Claude Code claude_code.* metrics for Prometheus to scrape.
     # resource_to_telemetry_conversion promotes resource attrs (service.name,

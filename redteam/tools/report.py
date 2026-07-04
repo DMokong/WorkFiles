@@ -85,6 +85,8 @@ def build_pack(ctx: ToolContext):
             ctx.audit.record_finding(finding)
             _ensure_sarif()
             _append_sarif_result(sarif_path, finding)
+        if ctx.telemetry is not None:
+            ctx.telemetry.event_finding(severity, title)  # RT-22: finding.recorded span
         return {"recorded": True, "title": title, "severity": severity}
 
     tools = [write_finding]

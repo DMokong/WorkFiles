@@ -82,15 +82,16 @@ moved it but left work.
   model-token cost may never be captured. *Fix:* separate turns from tool calls,
   confirm the SDK cost signal and wire model-token cost, count only
   successful+allowed calls. (`redteam/budget.py`, `redteam/orchestrator.py`.)
-- **RT-22 — observability partially unwired *(Partial after #7)*.** #7 wired the
-  **Claude Code CLI** telemetry (metrics→Prometheus, auto-provisioned Grafana)
-  and confirmed the env vars. **Still open:** the redteam **app's own**
-  `telemetry.py` is a no-op tracer — no `TracerProvider`/exporter is configured,
-  so `tool_span` / `event_finding` record nothing and the Tempo traces panel
-  stays empty. *Fix:* configure a real OTel `TracerProvider` + OTLP span
-  exporter at orchestrator start; emit `tool.invoked` + `finding.recorded`; wrap
-  tool execution in `tool_span`; gate `tls insecure` to the dev profile.
-  (`redteam/hooks/telemetry.py`, `redteam/orchestrator.py`.)
+- ~~**RT-22 — observability partially unwired.**~~ **DONE:** `setup_tracing()`
+  installs a real `TracerProvider` + OTLP exporter at orchestrator start, so the
+  app emits `tool.invoked` / `tool.denied` (in a per-decision `tool_span`) and
+  `finding.recorded` spans; collector `tls.insecure` is env-gated (secure
+  default, dev sets true); the Tempo dashboard panel is back. Also fixed a
+  pre-existing collector-config bug (`${env:VAR:-default}` only resolves on
+  collector ≥0.114.0 — 0.103.1 would not have started). Contract + in-memory
+  span tests; collector live-validated. *Residual:* app-level custom **metrics**
+  (only spans today; the metrics pipeline is fed by Claude Code's metrics), and
+  the OTLP-egress-vs-netpolicy caveat (shared with #7).
 - **RT-24 — schema validation gaps.** userinfo/port in URLs, weak hostname
   regex, list-size DoS, `Reporting.destination` traversal, YAML size. *Fix:*
   reject userinfo/unintended ports, tighten the hostname regex, cap list lengths
@@ -179,8 +180,8 @@ purpose:
 
 1. ~~RT-16 + container-side #6~~ **DONE** — scanners are pinned + checksum-verified
    in the image; next is a full-image build + a live whitebox run (see §C).
-2. **RT-22 app tracer** — a real `TracerProvider` so the app's own spans/events
-   populate Tempo (completes the #7 observability story).
+2. ~~RT-22 app tracer~~ **DONE** — real `TracerProvider` + app spans; the app's
+   tool/finding spans now populate Tempo (and fixed a collector-config bug).
 3. **RT-17 / RT-20 / RT-26** — the ledger/budget/error-handling hardening cluster.
 4. **RT-24 / RT-25** — schema + asset-containment validation at parse time.
 5. **RT-18** — redactor secrets/PII.

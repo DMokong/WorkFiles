@@ -315,6 +315,30 @@
 > rebuilt to completion under arm64→amd64 emulation — see
 > `docs/REMAINING-WORK.md` §C.)
 
+> **Update 2026-07-04 — RT-22: real app TracerProvider + a collector-config
+> fix.** #7 wired the *Claude Code CLI's* telemetry, but the redteam **app's
+> own** `telemetry.py` used the global **no-op** tracer, so `tool_span` /
+> `event_*` recorded nothing. Now `setup_tracing()` installs a real
+> `TracerProvider` + OTLP span exporter at orchestrator start (idempotent,
+> injectable for tests, degrade-safe), and the harness emits **`tool.invoked`**
+> / **`tool.denied`** (as leaf spans inside a per-decision `tool_span`) and
+> **`finding.recorded`** (from the report pack via `ToolContext.telemetry`) — so
+> the harness's *decisions* show up in Tempo, not just the model's tokens. The
+> collector's `tls.insecure` is now **env-gated** (secure by default; the dev
+> compose sets it true) instead of unconditional, and the Tempo dashboard panel
+> is back. Running `otelcol validate` also surfaced a **pre-existing bug**: the
+> `${env:VAR:-default}` inline-default syntax only resolves on
+> otel-collector-contrib **≥0.114.0** — the pinned **0.103.1 read
+> `VAR:-default` as the variable name and would not have started at all**;
+> bumped the image and pinned the floor in a test (it passes `docker compose
+> config`, so only a code test guards it). Built TDD with an in-memory span
+> exporter; the collector config was **live-validated** across versions. The
+> regression review was clean (**408 passed, ruff clean**); the correctness
+> sub-agent hit a session limit, so its concerns (ProxyTracer ordering, global
+> idempotency, degradation) were verified directly + by the live collector
+> validation. Residual: app-level custom *metrics* (spans only today) and the
+> shared OTLP-egress-vs-netpolicy caveat.
+
 ## How this review was produced
 
 Two multi-agent review workflows were run over the repo: a first pass of 9

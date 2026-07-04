@@ -20,7 +20,7 @@ from .engagement import Engagement
 from .hooks.audit_writer import AuditWriter
 from .hooks.redactor import Redactor
 from .hooks.scope_guard import ScopeDecision, ScopeGuard
-from .hooks.telemetry import Telemetry
+from .hooks.telemetry import Telemetry, setup_tracing
 from .ledger.chain import LedgerWriter
 from .mcp_external import build_configs as build_external_mcp_configs
 from .mcp_external import record_registrations as record_external_mcp_registrations
@@ -84,6 +84,7 @@ class Orchestrator:
             audit=self.audit,
             assets=self.assets,
             audit_dir=self.audit_dir,
+            telemetry=self.telemetry,
         )
 
     def build_options(self) -> dict[str, Any]:
@@ -184,58 +185,62 @@ class Orchestrator:
         tool_input = input_data.get("tool_input", {}) or {}
         tool_use_id = tool_use_id or input_data.get("tool_use_id", "")
         session_id = input_data.get("session_id", "")
+        target = _extract_target_for_budget(tool_input)
 
-        try:
-            # Time-window gate: the engagement is only authorized inside its
-            # window, including a run that started valid but crossed window.end.
-            if not self.within_window():
-                reason = self._window_reason()
+        # One span per pre-tool-use decision; the tool.invoked / tool.denied leaf
+        # spans emitted below become its children (RT-22).
+        with self.telemetry.tool_span(tool_name, {"target": target or ""}):
+            try:
+                # Time-window gate: the engagement is only authorized inside its
+                # window, including a run that started valid but crossed window.end.
+                if not self.within_window():
+                    reason = self._window_reason()
+                    self.audit.record_pre_tool(
+                        session_id=session_id,
+                        tool_use_id=tool_use_id,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        decision="deny",
+                        reason=reason,
+                    )
+                    self.telemetry.event_tool_denied(tool_name, reason)
+                    return self._deny(reason)
+
+                # Budget gate.
+                breach = self.budget.exceeded(target)
+                if breach:
+                    self.audit.record_pre_tool(
+                        session_id=session_id,
+                        tool_use_id=tool_use_id,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        decision="deny",
+                        reason=f"budget: {breach}",
+                    )
+                    self.telemetry.event_tool_denied(tool_name, breach)
+                    return self._deny(breach)
+
+                decision: ScopeDecision = self.scope.check(tool_name, tool_input)
                 self.audit.record_pre_tool(
                     session_id=session_id,
                     tool_use_id=tool_use_id,
                     tool_name=tool_name,
                     tool_input=tool_input,
-                    decision="deny",
-                    reason=reason,
+                    decision="allow" if decision.allowed else "deny",
+                    reason=decision.reason,
                 )
-                self.telemetry.event_tool_denied(tool_name, reason)
-                return self._deny(reason)
+                if not decision.allowed:
+                    self.telemetry.event_tool_denied(tool_name, decision.reason)
+                    return self._deny(decision.reason)
 
-            # Budget gate.
-            target = _extract_target_for_budget(tool_input)
-            breach = self.budget.exceeded(target)
-            if breach:
-                self.audit.record_pre_tool(
-                    session_id=session_id,
-                    tool_use_id=tool_use_id,
-                    tool_name=tool_name,
-                    tool_input=tool_input,
-                    decision="deny",
-                    reason=f"budget: {breach}",
-                )
-                self.telemetry.event_tool_denied(tool_name, breach)
-                return self._deny(breach)
-
-            decision: ScopeDecision = self.scope.check(tool_name, tool_input)
-            self.audit.record_pre_tool(
-                session_id=session_id,
-                tool_use_id=tool_use_id,
-                tool_name=tool_name,
-                tool_input=tool_input,
-                decision="allow" if decision.allowed else "deny",
-                reason=decision.reason,
-            )
-            if not decision.allowed:
-                self.telemetry.event_tool_denied(tool_name, decision.reason)
-                return self._deny(decision.reason)
-
-            if target:
-                self.budget.record_tool_call(target)
-            # No opinion -> proceeds under permission_mode="dontAsk" (allowed).
-            return {}
-        except Exception as e:  # noqa: BLE001 - the gate must fail closed
-            self.telemetry.event_tool_denied(tool_name, f"internal error: {e}")
-            return self._deny(f"scope guard internal error: {e}")
+                if target:
+                    self.budget.record_tool_call(target)
+                # No opinion -> proceeds under permission_mode="dontAsk" (allowed).
+                self.telemetry.event_tool_invoked(tool_name, target)
+                return {}
+            except Exception as e:  # noqa: BLE001 - the gate must fail closed
+                self.telemetry.event_tool_denied(tool_name, f"internal error: {e}")
+                return self._deny(f"scope guard internal error: {e}")
 
     async def _post_tool_use(
         self, input_data: dict[str, Any], tool_use_id: str | None, context: Any
@@ -264,6 +269,13 @@ class Orchestrator:
         if self._session_started:
             return
         assert_assets_exist(self.assets)  # fail early if targets weren't cloned
+        # Install a real TracerProvider so the harness's own tool.invoked /
+        # tool.denied / finding.recorded spans reach the collector (RT-22).
+        # No-ops cleanly when there is no OTLP endpoint (local dev).
+        setup_tracing(
+            f"redteam:{self.engagement.id}",
+            endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
+        )
         self.audit_dir.mkdir(parents=True, exist_ok=True)
         self.audit.record_session_start(self.engagement.model_dump(mode="json"))
         if signature is not None:

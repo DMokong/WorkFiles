@@ -56,12 +56,18 @@ services:
       # atlassian_token is added by docker-compose.atlassian.yml when needed.
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.103.1
+    # >=0.114.0: the `${env:VAR:-default}` inline-default syntax used in
+    # collector.yaml only resolves from this version (0.103.1 read the whole
+    # `VAR:-default` as the var name and failed to start).
+    image: otel/opentelemetry-collector-contrib:0.114.0
     command: ["--config=/etc/otel/collector.yaml"]
     volumes:
       - ./otel/collector.yaml:/etc/otel/collector.yaml:ro
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "${CENTRAL_OTLP_ENDPOINT:-http://tempo:4317}"
+      # Plaintext to the bundled local tempo. Leave false/unset when pointing
+      # CENTRAL_OTLP_ENDPOINT at a TLS backend in prod.
+      REDTEAM_OTLP_TLS_INSECURE: "${REDTEAM_OTLP_TLS_INSECURE:-true}"
     ports:
       - "4317:4317"   # OTLP/gRPC
       - "4318:4318"   # OTLP/HTTP

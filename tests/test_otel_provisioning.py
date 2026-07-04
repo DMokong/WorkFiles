@@ -66,6 +66,28 @@ def test_collector_exports_metrics_to_prometheus() -> None:
     assert "otlp" in c["service"]["pipelines"]["traces"]["exporters"]
 
 
+def test_collector_image_supports_env_default_syntax() -> None:
+    # collector.yaml uses `${env:VAR:-default}`, which only resolves on
+    # otel-collector-contrib >= 0.114.0 (older versions read the whole
+    # `VAR:-default` as the var name and fail to start). Pin the floor so a
+    # downgrade can't silently break the collector (it passes `compose config`).
+    img = _compose()["services"]["otel-collector"]["image"]
+    tag = img.rsplit(":", 1)[1]
+    major, minor = (int(x) for x in tag.split(".")[:2])
+    assert (major, minor) >= (0, 114), f"collector {tag} predates ${{env:VAR:-default}} support"
+
+
+def test_collector_tls_insecure_is_dev_gated() -> None:
+    # RT-22: `insecure: true` must NOT be unconditional (it would hit a prod TLS
+    # backend). It's env-templated, default false; the dev compose sets it true.
+    c = _yaml(OTEL / "collector.yaml")
+    insecure = c["exporters"]["otlp"]["tls"]["insecure"]
+    assert insecure is not True, "collector otlp tls.insecure must not be an unconditional true"
+    assert "REDTEAM_OTLP_TLS_INSECURE" in str(insecure) and ":-false" in str(insecure)
+    env = _env_map(_compose()["services"]["otel-collector"])
+    assert "REDTEAM_OTLP_TLS_INSECURE" in env
+
+
 # ---- Grafana datasource provisioning ----------------------------------------
 
 
@@ -98,6 +120,20 @@ def test_dashboard_queries_claude_code_metrics() -> None:
     # The panels populate from real Claude Code OTLP metrics (Prometheus-mangled).
     assert "claude_code_" in joined
     assert any("token_usage" in e for e in exprs)
+
+
+def test_dashboard_has_tempo_span_panel() -> None:
+    # RT-22: the app now emits tool.invoked/tool.denied/finding.recorded spans, so
+    # the dashboard carries a Tempo panel that queries the redteam service spans.
+    dash = json.loads((OTEL / "grafana" / "dashboards" / "redteam-engagement.json").read_text())
+    tempo_targets = [
+        t.get("query", "")
+        for p in dash["panels"]
+        if p.get("datasource", {}).get("type") == "tempo"
+        for t in p.get("targets", [])
+    ]
+    assert tempo_targets, "dashboard must have a Tempo (traces) panel"
+    assert any("service.name" in q and "redteam" in q for q in tempo_targets)
 
 
 def test_metric_names_match_collector_suffix_setting() -> None:
